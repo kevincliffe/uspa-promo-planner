@@ -1273,15 +1273,117 @@
         padding: 20px;
       }
     }
+
+    /* ===== AUTH LOGIN SCREEN ===== */
+    #auth-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: linear-gradient(135deg, #1B365D 0%, #0a1f3a 100%);
+      z-index: 10000; display: flex; align-items: center; justify-content: center;
+    }
+    #auth-overlay.hidden { display: none; }
+    .login-card {
+      background: white; border-radius: 12px; padding: 40px 36px; width: 380px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3); text-align: center;
+    }
+    .login-card h2 { color: #1B365D; font-size: 22px; margin-bottom: 4px; }
+    .login-card .login-subtitle { color: #666; font-size: 13px; margin-bottom: 24px; }
+    .login-card input {
+      width: 100%; padding: 12px 14px; border: 1px solid #ddd; border-radius: 8px;
+      font-size: 14px; margin-bottom: 12px; outline: none; transition: border 0.2s;
+    }
+    .login-card input:focus { border-color: #1B365D; }
+    .login-card .login-btn {
+      width: 100%; padding: 12px; background: #1B365D; color: white; border: none;
+      border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer;
+      transition: background 0.2s; margin-top: 4px;
+    }
+    .login-card .login-btn:hover { background: #0a1f3a; }
+    .login-card .login-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .login-error { color: #DC2626; font-size: 12px; margin-top: 8px; min-height: 18px; }
+    .login-footer { color: #999; font-size: 11px; margin-top: 16px; }
+    .login-logo { font-size: 36px; margin-bottom: 12px; }
+    .login-link { color: #1B365D; cursor: pointer; text-decoration: underline; font-size: 13px; }
+
+    /* User menu in header */
+    .user-menu {
+      display: inline-flex; align-items: center; gap: 8px; margin-left: 12px;
+      font-size: 12px; color: rgba(255,255,255,0.8);
+    }
+    .user-menu .user-email { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .user-menu .logout-btn {
+      background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25);
+      color: white; padding: 4px 10px; border-radius: 5px; font-size: 11px;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .user-menu .logout-btn:hover { background: rgba(255,255,255,0.25); }
+
+    /* Admin panel */
+    .admin-panel {
+      background: white; border: 1px solid #e5e7eb; border-radius: 8px;
+      padding: 20px; margin: 20px 40px; display: none;
+    }
+    .admin-panel.visible { display: block; }
+    .admin-panel h3 { font-size: 16px; color: #1B365D; margin-bottom: 12px; }
+    .admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .admin-table th { text-align: left; padding: 8px 12px; border-bottom: 2px solid #e5e7eb; color: #666; font-weight: 600; }
+    .admin-table td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; }
+    .admin-btn {
+      padding: 5px 12px; border-radius: 5px; font-size: 12px; font-weight: 600;
+      cursor: pointer; border: 1px solid #ddd; background: #f9fafb; color: #333;
+      transition: all 0.2s;
+    }
+    .admin-btn:hover { background: #e5e7eb; }
+    .admin-btn.danger { color: #DC2626; border-color: #fca5a5; }
+    .admin-btn.danger:hover { background: #fef2f2; }
+    .admin-btn.primary { background: #1B365D; color: white; border-color: #1B365D; }
+    .admin-btn.primary:hover { background: #0a1f3a; }
+    .admin-add-row { display: flex; gap: 8px; margin-top: 12px; }
+    .admin-add-row input { flex: 1; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
   </style>
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 </head>
 <body>
-  <div class="header">
-    <h1>USPA Australia Promotional Planner</h1>
-    <p id="fy-subtitle">Financial Year Overview</p>
+  <!-- LOGIN OVERLAY -->
+  <div id="auth-overlay">
+    <div class="login-card">
+      <div class="login-logo">&#127468;&#127463;</div>
+      <h2>USPA Australia</h2>
+      <p class="login-subtitle">Promotional Planner — Team Login</p>
+      <div id="login-form">
+        <input type="email" id="login-email" placeholder="Email address" autocomplete="email">
+        <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+        <button class="login-btn" id="login-btn" onclick="doLogin()">Sign In</button>
+        <div class="login-error" id="login-error"></div>
+        <p style="margin-top:14px;">
+          <span class="login-link" onclick="toggleResetPassword()">Forgot password?</span>
+        </p>
+      </div>
+      <div id="reset-form" style="display:none;">
+        <input type="email" id="reset-email" placeholder="Email address">
+        <button class="login-btn" onclick="doResetPassword()">Send Reset Link</button>
+        <div class="login-error" id="reset-error"></div>
+        <p style="margin-top:14px;">
+          <span class="login-link" onclick="toggleResetPassword()">Back to login</span>
+        </p>
+      </div>
+      <p class="login-footer">Access restricted to authorised team members</p>
+    </div>
+  </div>
+
+  <div id="app-container" style="display:none;">
+  <div class="header" style="display:flex;align-items:center;justify-content:space-between;">
+    <div>
+      <h1>USPA Australia Promotional Planner</h1>
+      <p id="fy-subtitle">Financial Year Overview</p>
+    </div>
+    <div class="user-menu" id="user-menu">
+      <span class="user-email" id="user-email"></span>
+      <button class="logout-btn" onclick="doLogout()">Sign Out</button>
+      <button class="logout-btn" id="admin-toggle-btn" onclick="toggleAdminPanel()" style="display:none;">Manage Users</button>
+    </div>
   </div>
 
   <div class="nav">
@@ -1303,11 +1405,31 @@
     </div>
   </div>
 
+  <!-- Admin User Management Panel -->
+  <div class="admin-panel" id="admin-panel">
+    <h3>User Management</h3>
+    <table class="admin-table" id="admin-user-table">
+      <thead><tr><th>Email</th><th>Role</th><th>Created</th><th>Actions</th></tr></thead>
+      <tbody id="admin-user-tbody"></tbody>
+    </table>
+    <div class="admin-add-row">
+      <input type="email" id="admin-new-email" placeholder="New user email">
+      <input type="password" id="admin-new-password" placeholder="Temporary password (min 6 chars)">
+      <select id="admin-new-role" style="padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+        <option value="editor">Editor</option>
+        <option value="admin">Admin</option>
+      </select>
+      <button class="admin-btn primary" onclick="addNewUser()">Add User</button>
+    </div>
+    <p id="admin-msg" style="font-size:12px;margin-top:8px;min-height:18px;"></p>
+  </div>
+
   <div class="stats-bar" id="stats-bar"></div>
 
   <div class="content">
     <div id="app"></div>
   </div>
+  </div><!-- /app-container -->
 
   <script>
     // ============================================================================
@@ -1840,6 +1962,251 @@
     var _syncStatus = 'connecting'; // connecting | synced | offline | no-config
     var _ignoreNextFirebaseUpdate = false;
     var _saveDebounceTimer = null;
+    var _firebaseApp = null;
+    var _currentUser = null;
+    var _userRole = null; // 'admin' or 'editor'
+
+    // ============================================================================
+    // FIREBASE AUTHENTICATION
+    // ============================================================================
+
+    // First admin email — this user automatically gets admin role
+    var ADMIN_EMAIL = 'krcliffe@gmail.com';
+
+    function initAuth() {
+      if (FIREBASE_CONFIG.apiKey === 'PASTE_YOUR_API_KEY') return;
+      try {
+        _firebaseApp = firebase.initializeApp(FIREBASE_CONFIG);
+        // Listen for auth state changes
+        firebase.auth().onAuthStateChanged(function(user) {
+          if (user) {
+            _currentUser = user;
+            onUserLoggedIn(user);
+          } else {
+            _currentUser = null;
+            _userRole = null;
+            showLoginScreen();
+          }
+        });
+      } catch(e) {
+        console.error('Firebase auth init failed:', e);
+      }
+    }
+
+    function onUserLoggedIn(user) {
+      // Check user role from database
+      var rolesRef = firebase.database().ref('uspa_au_planner/users/' + encodeEmailKey(user.email));
+      rolesRef.once('value').then(function(snap) {
+        var userData = snap.val();
+        if (!userData) {
+          // First-time: if admin email, auto-create as admin
+          if (user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
+            _userRole = 'admin';
+            rolesRef.set({ email: user.email, role: 'admin', created: new Date().toISOString() });
+          } else {
+            // Check if user was pre-registered by admin
+            firebase.auth().signOut();
+            showLoginError('Account not authorised. Contact your admin for access.');
+            return;
+          }
+        } else {
+          _userRole = userData.role || 'editor';
+        }
+        showApp(user);
+      }).catch(function(err) {
+        // If DB read fails (rules), check if it's the admin email
+        if (user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
+          _userRole = 'admin';
+          showApp(user);
+        } else {
+          console.error('Role check failed:', err);
+          showLoginError('Access check failed. Please try again.');
+        }
+      });
+    }
+
+    function showApp(user) {
+      document.getElementById('auth-overlay').classList.add('hidden');
+      document.getElementById('app-container').style.display = '';
+      document.getElementById('user-email').textContent = user.email;
+      if (_userRole === 'admin') {
+        document.getElementById('admin-toggle-btn').style.display = '';
+      }
+      // Now init the database connection
+      initFirebase();
+    }
+
+    function showLoginScreen() {
+      document.getElementById('auth-overlay').classList.remove('hidden');
+      document.getElementById('app-container').style.display = 'none';
+    }
+
+    function showLoginError(msg) {
+      document.getElementById('login-error').textContent = msg;
+    }
+
+    function doLogin() {
+      var email = document.getElementById('login-email').value.trim();
+      var password = document.getElementById('login-password').value;
+      if (!email || !password) { showLoginError('Please enter email and password.'); return; }
+
+      var btn = document.getElementById('login-btn');
+      btn.disabled = true; btn.textContent = 'Signing in...';
+      showLoginError('');
+
+      firebase.auth().signInWithEmailAndPassword(email, password)
+        .then(function() { btn.disabled = false; btn.textContent = 'Sign In'; })
+        .catch(function(err) {
+          btn.disabled = false; btn.textContent = 'Sign In';
+          var msg = 'Login failed.';
+          if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+            msg = 'Invalid email or password.';
+          } else if (err.code === 'auth/too-many-requests') {
+            msg = 'Too many attempts. Please try again later.';
+          } else if (err.code === 'auth/invalid-email') {
+            msg = 'Invalid email address.';
+          }
+          showLoginError(msg);
+        });
+    }
+
+    function doLogout() {
+      firebase.auth().signOut();
+    }
+
+    function toggleResetPassword() {
+      var loginForm = document.getElementById('login-form');
+      var resetForm = document.getElementById('reset-form');
+      if (resetForm.style.display === 'none') {
+        resetForm.style.display = ''; loginForm.style.display = 'none';
+      } else {
+        resetForm.style.display = 'none'; loginForm.style.display = '';
+      }
+    }
+
+    function doResetPassword() {
+      var email = document.getElementById('reset-email').value.trim();
+      if (!email) { document.getElementById('reset-error').textContent = 'Please enter your email.'; return; }
+      firebase.auth().sendPasswordResetEmail(email).then(function() {
+        document.getElementById('reset-error').style.color = '#059669';
+        document.getElementById('reset-error').textContent = 'Reset link sent! Check your inbox.';
+      }).catch(function(err) {
+        document.getElementById('reset-error').style.color = '#DC2626';
+        document.getElementById('reset-error').textContent = 'Could not send reset email. Check the address.';
+      });
+    }
+
+    // ============================================================================
+    // ADMIN USER MANAGEMENT
+    // ============================================================================
+
+    function encodeEmailKey(email) {
+      return email.replace(/\./g, ',').replace(/@/g, '__at__');
+    }
+    function decodeEmailKey(key) {
+      return key.replace(/,/g, '.').replace(/__at__/g, '@');
+    }
+
+    function toggleAdminPanel() {
+      var panel = document.getElementById('admin-panel');
+      panel.classList.toggle('visible');
+      if (panel.classList.contains('visible')) loadUserList();
+    }
+
+    function loadUserList() {
+      var tbody = document.getElementById('admin-user-tbody');
+      tbody.innerHTML = '<tr><td colspan="4">Loading...</td></tr>';
+      firebase.database().ref('uspa_au_planner/users').once('value').then(function(snap) {
+        var users = snap.val() || {};
+        tbody.innerHTML = '';
+        Object.keys(users).forEach(function(key) {
+          var u = users[key];
+          var tr = document.createElement('tr');
+          var created = u.created ? new Date(u.created).toLocaleDateString() : '—';
+          var isCurrentUser = _currentUser && u.email === _currentUser.email;
+          tr.innerHTML = '<td>' + u.email + '</td><td>' + (u.role || 'editor') + '</td><td>' + created + '</td>' +
+            '<td>' + (isCurrentUser ? '<span style="color:#999;font-size:12px;">You</span>' :
+            '<button class="admin-btn danger" onclick="removeUser(\'' + key + '\',\'' + u.email + '\')">Remove</button>') + '</td>';
+          tbody.appendChild(tr);
+        });
+        if (Object.keys(users).length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4" style="color:#999;">No users yet</td></tr>';
+        }
+      });
+    }
+
+    function addNewUser() {
+      if (_userRole !== 'admin') return;
+      var email = document.getElementById('admin-new-email').value.trim();
+      var password = document.getElementById('admin-new-password').value;
+      var role = document.getElementById('admin-new-role').value;
+      var msgEl = document.getElementById('admin-msg');
+      msgEl.textContent = '';
+
+      if (!email || !password) { msgEl.textContent = 'Email and password are required.'; msgEl.style.color = '#DC2626'; return; }
+      if (password.length < 6) { msgEl.textContent = 'Password must be at least 6 characters.'; msgEl.style.color = '#DC2626'; return; }
+
+      msgEl.textContent = 'Creating user...'; msgEl.style.color = '#666';
+
+      // Use a secondary Firebase app to create user without signing out current admin
+      var secondaryApp;
+      try {
+        secondaryApp = firebase.app('secondary');
+      } catch(e) {
+        secondaryApp = firebase.initializeApp(FIREBASE_CONFIG, 'secondary');
+      }
+
+      secondaryApp.auth().createUserWithEmailAndPassword(email, password).then(function(cred) {
+        // Add user to database
+        var userKey = encodeEmailKey(email);
+        return firebase.database().ref('uspa_au_planner/users/' + userKey).set({
+          email: email, role: role, created: new Date().toISOString(), uid: cred.user.uid
+        }).then(function() {
+          // Sign out the secondary app
+          secondaryApp.auth().signOut();
+          msgEl.textContent = 'User ' + email + ' created successfully!'; msgEl.style.color = '#059669';
+          document.getElementById('admin-new-email').value = '';
+          document.getElementById('admin-new-password').value = '';
+          loadUserList();
+        });
+      }).catch(function(err) {
+        msgEl.style.color = '#DC2626';
+        if (err.code === 'auth/email-already-in-use') {
+          // User exists in Auth, just register them in our DB
+          var userKey = encodeEmailKey(email);
+          firebase.database().ref('uspa_au_planner/users/' + userKey).set({
+            email: email, role: role, created: new Date().toISOString()
+          }).then(function() {
+            msgEl.textContent = 'User ' + email + ' registered (account already existed).'; msgEl.style.color = '#059669';
+            document.getElementById('admin-new-email').value = '';
+            document.getElementById('admin-new-password').value = '';
+            loadUserList();
+          });
+        } else {
+          msgEl.textContent = 'Error: ' + err.message;
+        }
+      });
+    }
+
+    function removeUser(key, email) {
+      if (!confirm('Remove ' + email + ' from the team? They will no longer be able to log in.')) return;
+      firebase.database().ref('uspa_au_planner/users/' + key).remove().then(function() {
+        loadUserList();
+        document.getElementById('admin-msg').textContent = email + ' removed.';
+        document.getElementById('admin-msg').style.color = '#059669';
+      });
+    }
+
+    // Allow Enter key to submit login
+    document.getElementById('login-password').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') doLogin();
+    });
+    document.getElementById('login-email').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') document.getElementById('login-password').focus();
+    });
+
+    // Start auth flow
+    initAuth();
 
     function initFirebase() {
       // Check if config has been set up
@@ -1850,7 +2217,7 @@
         return;
       }
       try {
-        firebase.initializeApp(FIREBASE_CONFIG);
+        // App already initialized in initAuth(), just set up database ref
         _firebaseRef = firebase.database().ref('uspa_au_planner/state');
         _firebaseReady = true;
 
