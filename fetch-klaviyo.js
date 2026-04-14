@@ -89,9 +89,7 @@ async function fetchCampaignsSent(key) {
   const filter = `and(greater-or-equal(created_at,${since}),equals(messages.channel,"email"),equals(status,"Sent"))`;
   const path =
     `/campaigns?filter=${encodeURIComponent(filter)}` +
-    `&fields[campaign]=name,status,send_time,scheduled_at,created_at,updated_at` +
-    `&include=campaign-messages` +
-    `&fields[campaign-message]=definition.label,definition.content.subject,definition.content.preview_text`;
+    `&fields[campaign]=name,status,send_time,scheduled_at,created_at,updated_at`;
   return klaviyoPaged(path, key);
 }
 
@@ -100,9 +98,7 @@ async function fetchCampaignsUpcoming(key) {
   const filter = `and(equals(messages.channel,"email"),any(status,["Scheduled","Draft","Sending","Queued without Recipients","Preparing to send"]),less-or-equal(scheduled_at,${until}))`;
   const path =
     `/campaigns?filter=${encodeURIComponent(filter)}` +
-    `&fields[campaign]=name,status,send_time,scheduled_at,created_at` +
-    `&include=campaign-messages` +
-    `&fields[campaign-message]=definition.label,definition.content.subject,definition.content.preview_text`;
+    `&fields[campaign]=name,status,send_time,scheduled_at,created_at`;
   return klaviyoPaged(path, key);
 }
 
