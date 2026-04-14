@@ -1436,7 +1436,7 @@
     // REAL DATA
     // ============================================================================
 
-    const SHOPIFY_ORDERS = {
+    let SHOPIFY_ORDERS = {
       "2025-01": 7, "2025-02": 16, "2025-03": 28, "2025-04": 158, "2025-05": 301,
       "2025-06": 389, "2025-07": 346, "2025-08": 839, "2025-09": 506, "2025-10": 683,
       "2025-11": 3350, "2025-12": 2791, "2026-01": 1259, "2026-02": 753,
@@ -1444,7 +1444,7 @@
     };
 
     // Monthly Shopify sales data (revenue, orders, units) from Windsor
-    const SHOPIFY_MONTHLY = {
+    let SHOPIFY_MONTHLY = {
       "2025-01": {rev:700,orders:7,units:14},
       "2025-02": {rev:2483,orders:16,units:31},
       "2025-03": {rev:1866,orders:28,units:49},
@@ -1484,6 +1484,26 @@
 
     const AOV = 85;
     const MARGIN_RATE = 0.55; // 55% gross margin before discount
+
+    // Load live Shopify data from Firebase pipeline (overwrites static fallbacks)
+    function loadShopifyDataFromFirebase() {
+      if (!firebase.auth().currentUser) return;
+      var monthlyRef = firebase.database().ref('uspa_au/shopify_data/monthly');
+      monthlyRef.once('value', function(snapshot) {
+        var data = snapshot.val();
+        if (!data) { console.log('No Shopify pipeline data in Firebase yet'); return; }
+        console.log('Loading Shopify data from Firebase pipeline...');
+        Object.keys(data).forEach(function(monthKey) {
+          var m = data[monthKey];
+          if (m && typeof m.orders === 'number') {
+            SHOPIFY_ORDERS[monthKey] = m.orders;
+            SHOPIFY_MONTHLY[monthKey] = { rev: m.revenue || 0, orders: m.orders || 0, units: m.units || 0 };
+          }
+        });
+        console.log('Shopify data updated from pipeline');
+        render();
+      });
+    }
 
     // ============================================================================
     // WEEKLY ACTUALS — real per-week data (Monday-start ISO weeks)
@@ -2246,6 +2266,9 @@
           }
           updateSyncIndicator();
         });
+
+        // Load live Shopify data from pipeline
+        loadShopifyDataFromFirebase();
       } catch(e) {
         console.error('Firebase init failed:', e);
         _syncStatus = 'offline';
