@@ -29,3 +29,12 @@ jobs:
           FIREBASE_PASSWORD: ${{ secrets.FIREBASE_PASSWORD }}
           BRANDS_CONFIG: ${{ secrets.BRANDS_CONFIG }}
         run: node pipeline/fetch-shopify.js
+
+      - name: Run Klaviyo pipeline
+        env:
+          FIREBASE_DB_URL: ${{ secrets.FIREBASE_DB_URL }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_EMAIL: ${{ secrets.FIREBASE_EMAIL }}
+          FIREBASE_PASSWORD: ${{ secrets.FIREBASE_PASSWORD }}
+          BRANDS_CONFIG: ${{ secrets.BRANDS_CONFIG }}
+        run: node pipeline/fetch-klaviyo.js
