@@ -2296,7 +2296,8 @@
               converted[monthKey] = Object.values(arr);
             }
           });
-          KLAVIYO_EMAILS = converted;
+          // Merge: Firebase data overwrites matching months; hardcoded months preserved
+           Object.keys(converted).forEach(function(mk) { KLAVIYO_EMAILS[mk] = converted[mk]; });
           console.log('Klaviyo data loaded from Firebase:', Object.keys(converted).length, 'months');
           render();
         });
