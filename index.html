@@ -3706,6 +3706,7 @@
     function toggleCPDone(taskKey) {
       if (!state.cpDone) state.cpDone = {};
       state.cpDone[taskKey] = !state.cpDone[taskKey];
+      saveState();
       render();
     }
 
