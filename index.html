@@ -2360,6 +2360,34 @@
       } catch(e) { console.warn('Klaviyo Firebase load failed:', e); }
     }
 
+    function loadWeeklyDataFromFirebase() {
+      if (!firebase.auth().currentUser) return;
+      var weeklyRef = firebase.database().ref('uspa_au/shopify_data/weekly');
+      weeklyRef.once('value', function(snapshot) {
+        var data = snapshot.val();
+        if (!data) { console.log('No weekly Shopify data in Firebase yet'); return; }
+        console.log('Loading weekly Shopify data from Firebase...');
+        if (data.orders) {
+          Object.keys(data.orders).forEach(function(weekKey) {
+            WEEKLY_ORDERS[weekKey] = data.orders[weekKey];
+          });
+        }
+        console.log('Weekly orders updated: ' + Object.keys(data.orders || {}).length + ' weeks');
+        render();
+      });
+      var metaWeeklyRef = firebase.database().ref('uspa_au/meta_data/weekly');
+      metaWeeklyRef.once('value', function(snapshot) {
+        var data = snapshot.val();
+        if (!data) { console.log('No weekly Meta data in Firebase yet'); return; }
+        console.log('Loading weekly Meta spend from Firebase...');
+        Object.keys(data).forEach(function(weekKey) {
+          WEEKLY_META_SPEND[weekKey] = data[weekKey];
+        });
+        console.log('Weekly Meta spend updated: ' + Object.keys(data).length + ' weeks');
+        render();
+      });
+    }
+
     let state = {
       currentTab: "annual",
       selectedFY: "FY26",
