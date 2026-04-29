@@ -1577,7 +1577,10 @@
     };
 
     // Planned average discount % by month (for margin modeling)
-    const PLANNED_DISCOUNT = {
+    // Hardcoded fallback — overridden live from {BRAND_KEY}/margin_data/monthly
+    // (see loadMarginsFromFirebase below). Edit margins.csv in storflo-agent/
+    // and run sync_margins_to_dashboard via the agent to update.
+    let PLANNED_DISCOUNT = {
       "2024-07": 30, "2024-08": 20, "2024-09": 10, "2024-10": 15,
       "2024-11": 35, "2024-12": 45, "2025-01": 30, "2025-02": 25,
       "2025-03": 20, "2025-04": 25, "2025-05": 15, "2025-06": 35,
@@ -1594,8 +1597,9 @@
 
     // GM% and Average Markdown per month — populated from P&L data
     // gm = gross margin %, md = average markdown %
-    // Blank months will show "—" and be editable inline
-    const MONTH_MARGIN = {
+    // Hardcoded fallback — overridden live from {BRAND_KEY}/margin_data/monthly
+    // (see loadMarginsFromFirebase below).
+    let MONTH_MARGIN = {
       // FY26 actuals from P&L (Jul 25 – Feb 26). Mar 26 pending next update.
       "2025-07": {gm: 87.7, md: 16.6},
       "2025-08": {gm: 86.2, md: 23.2},
@@ -2297,6 +2301,7 @@
         // Load live Shopify data from pipeline
         loadShopifyDataFromFirebase(); loadWeeklyShopifyFromFirebase(); loadMetaSpendFromFirebase(); loadGoogleSpendFromFirebase();
         loadMonthlyMetaFromFirebase(); loadMonthlyGoogleFromFirebase(); loadMonthlyInsightsFromFirebase();
+        loadMarginsFromFirebase();
       } catch(e) {
         console.error('Firebase init failed:', e);
         _syncStatus = 'offline';
@@ -2414,6 +2419,35 @@
             render();
           });
         } catch(e) { console.warn('Monthly insights load failed:', e); }
+      }
+
+      // Margins (GM%, MD%, planned discount%) — sourced from margins.csv via the
+      // agent's sync_margins_to_dashboard tool. Merges over the hardcoded fallback
+      // so existing months keep working if Firebase node is empty.
+      function loadMarginsFromFirebase() {
+        if (!firebase.auth().currentUser) return;
+        try {
+          firebase.database().ref(BRAND_KEY + '/margin_data/monthly').once('value', function(snap) {
+            var data = snap.val();
+            if (!data) { console.log('No margin_data in Firebase yet (run sync_margins_to_dashboard in the agent)'); return; }
+            var gmCount = 0, mdCount = 0, discCount = 0;
+            Object.keys(data).forEach(function(monthKey) {
+              var m = data[monthKey];
+              if (!m) return;
+              if (typeof m.gm === 'number' || typeof m.md === 'number') {
+                if (!MONTH_MARGIN[monthKey]) MONTH_MARGIN[monthKey] = {};
+                if (typeof m.gm === 'number') { MONTH_MARGIN[monthKey].gm = m.gm; gmCount++; }
+                if (typeof m.md === 'number') { MONTH_MARGIN[monthKey].md = m.md; mdCount++; }
+              }
+              if (typeof m.planned_discount === 'number') {
+                PLANNED_DISCOUNT[monthKey] = m.planned_discount;
+                discCount++;
+              }
+            });
+            console.log('Margin data loaded from Firebase: GM=' + gmCount + ' MD=' + mdCount + ' Disc=' + discCount + ' months');
+            render();
+          });
+        } catch(e) { console.warn('Margin load failed:', e); }
       }
 
       function loadKlaviyoDataFromFirebase() {
@@ -3135,9 +3169,10 @@
         mt.klaviyo_revenue > 0 ? formatCurrency(mt.klaviyo_revenue) : '—',
         (mt.klaviyo_share > 0 ? (mt.klaviyo_share * 100).toFixed(1) + '% share' : '')
         + (mKlavCampaigns > 0 ? ' · ' + mKlavCampaigns + ' campaigns' : ''));
+      var mTotalConv = Math.round(mMetaPurchases + mGoogleConv);
       html += _insightBadge('Conversions',
-        (mMetaPurchases + mGoogleConv) > 0 ? (mMetaPurchases + mGoogleConv).toLocaleString() : '—',
-        'Meta ' + mMetaPurchases.toLocaleString() + ' · Google ' + Math.round(mGoogleConv).toLocaleString());
+        mTotalConv > 0 ? mTotalConv.toLocaleString() : '—',
+        'Meta ' + Math.round(mMetaPurchases).toLocaleString() + ' · Google ' + Math.round(mGoogleConv).toLocaleString());
       html += '</div>';
       html += '</div>';
 
