@@ -1506,6 +1506,10 @@
     // Written by the agent's sync_monthly_insights tool.
     let MONTHLY_INSIGHTS = {};
 
+    // Weekly counterpart — keyed by Monday ISO date (e.g. "2025-08-04").
+    // Written by the agent's sync_weekly_insights tool.
+    let WEEKLY_INSIGHTS = {};
+
     const AOV = 85;
     const MARGIN_RATE = 0.55; // 55% gross margin before discount
 
@@ -2301,7 +2305,7 @@
         // Load live Shopify data from pipeline
         loadShopifyDataFromFirebase(); loadWeeklyShopifyFromFirebase(); loadMetaSpendFromFirebase(); loadGoogleSpendFromFirebase();
         loadMonthlyMetaFromFirebase(); loadMonthlyGoogleFromFirebase(); loadMonthlyInsightsFromFirebase();
-        loadMarginsFromFirebase();
+        loadWeeklyInsightsFromFirebase(); loadMarginsFromFirebase();
       } catch(e) {
         console.error('Firebase init failed:', e);
         _syncStatus = 'offline';
@@ -2419,6 +2423,19 @@
             render();
           });
         } catch(e) { console.warn('Monthly insights load failed:', e); }
+      }
+
+      function loadWeeklyInsightsFromFirebase() {
+        if (!firebase.auth().currentUser) return;
+        try {
+          firebase.database().ref(BRAND_KEY + '/weekly_insights').once('value', function(snap) {
+            var data = snap.val();
+            if (!data) { console.log('No unified weekly_insights in Firebase yet (run sync_weekly_insights in the agent)'); return; }
+            WEEKLY_INSIGHTS = data;
+            console.log('Weekly insights loaded from Firebase:', Object.keys(data).length, 'weeks');
+            render();
+          });
+        } catch(e) { console.warn('Weekly insights load failed:', e); }
       }
 
       // Margins (GM%, MD%, planned discount%) — sourced from margins.csv via the
@@ -4229,8 +4246,54 @@
       return html;
     }
 
+    // Aggregate WEEKLY_INSIGHTS for an FY's date range → totals
+    function getWeeklyInsightsTotalsForFY(fyKey) {
+      var fy = FY_DEFS[fyKey];
+      if (!fy) return null;
+      var t = { revenue: 0, klaviyo_revenue: 0, meta_spend: 0, google_spend: 0, ad_spend: 0, weeks_with_data: 0 };
+      var startStr = fy.startYear + '-' + String(fy.startMonth).padStart(2,'0') + '-01';
+      var endStr   = fy.endYear   + '-' + String(fy.endMonth  ).padStart(2,'0') + '-31';
+      Object.keys(WEEKLY_INSIGHTS || {}).forEach(function(wk) {
+        if (wk < startStr || wk > endStr) return;
+        var w = WEEKLY_INSIGHTS[wk]; if (!w) return;
+        t.weeks_with_data++;
+        if (w.shopify) t.revenue += (w.shopify.revenue || 0);
+        if (w.klaviyo) t.klaviyo_revenue += (w.klaviyo.revenue || 0);
+        if (w.meta)    t.meta_spend += (w.meta.spend || 0);
+        if (w.google)  t.google_spend += (w.google.spend || 0);
+        if (w.totals)  t.ad_spend += (w.totals.ad_spend || 0);
+      });
+      t.blended_roas = t.ad_spend > 0 ? t.revenue / t.ad_spend : 0;
+      t.klaviyo_share = t.revenue > 0 ? t.klaviyo_revenue / t.revenue : 0;
+      return t;
+    }
+
     function renderWeeklyPlanner() {
       var html = '<div class="weekly-container">';
+
+      // ──────────────────────────────────────────────
+      // FY WEEKLY TOTALS — multi-channel summary across the selected FY
+      // ──────────────────────────────────────────────
+      var fyLabel = (FY_DEFS[state.selectedFY] || {}).label || state.selectedFY;
+      var wt = getWeeklyInsightsTotalsForFY(state.selectedFY);
+      if (wt && wt.weeks_with_data > 0) {
+        var wRoasColor = wt.blended_roas >= 3 ? '#059669' : wt.blended_roas >= 2 ? '#D97706' : '#DC2626';
+        html += '<div style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:10px;padding:16px;margin-bottom:16px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">';
+        html += '<div style="font-size:14px;font-weight:700;color:#1B365D;">' + fyLabel + ' — Weekly Multi-Channel Totals</div>';
+        html += '<div style="font-size:11px;color:#6B7280;">Live from Firebase · ' + wt.weeks_with_data + ' weeks with unified data</div>';
+        html += '</div>';
+        html += '<div style="display:flex;flex-wrap:wrap;gap:10px;">';
+        html += _insightBadge('Revenue (ex-tax)', formatCurrency(wt.revenue));
+        html += _insightBadge('Total Ad Spend', formatCurrency(wt.ad_spend),
+          'Meta ' + formatCurrency(wt.meta_spend) + ' · Google ' + formatCurrency(wt.google_spend));
+        html += _insightBadge('Blended ROAS', wt.blended_roas > 0 ? wt.blended_roas.toFixed(2) + 'x' : '—', '', wRoasColor);
+        html += _insightBadge('Klaviyo Revenue',
+          wt.klaviyo_revenue > 0 ? formatCurrency(wt.klaviyo_revenue) : '—',
+          wt.klaviyo_share > 0 ? (wt.klaviyo_share * 100).toFixed(1) + '% of total revenue' : '');
+        html += '</div></div>';
+      }
+
       html += '<table class="weekly-table"><thead><tr>';
       html += '<th>Week</th><th>Dates</th><th>Active Promos</th>';
       html += '<th>Email 1</th><th>Email 2</th>';
