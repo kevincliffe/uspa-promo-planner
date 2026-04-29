@@ -1382,7 +1382,7 @@
     <div class="user-menu" id="user-menu">
       <span class="user-email" id="user-email"></span>
       <button class="logout-btn" onclick="doLogout()">Sign Out</button>
-      <button class="logout-btn" id="admin-toggle-btn" onclick="toggleAdminPanel()" style="display:none;">Manage Users</button>
+      <button class="logout-btn" id="admin-toggle-btn" onclick="toggleAdminPanel()" style="display:none;">Admin</button>
     </div>
   </div>
 
@@ -1405,7 +1405,7 @@
     </div>
   </div>
 
-  <!-- Admin User Management Panel -->
+  <!-- Admin Panel (User management + Critical Path templates) -->
   <div class="admin-panel" id="admin-panel">
     <h3>User Management</h3>
     <table class="admin-table" id="admin-user-table">
@@ -1422,6 +1422,14 @@
       <button class="admin-btn primary" onclick="addNewUser()">Add User</button>
     </div>
     <p id="admin-msg" style="font-size:12px;margin-top:8px;min-height:18px;"></p>
+
+    <h3 style="margin-top:28px;">Critical Path Templates</h3>
+    <p style="font-size:12px;color:#6B7280;margin-bottom:12px;">Manage the master task lists that drive every event's critical path. Edits propagate to ALL events using each template. Saved to Firebase per brand.</p>
+    <div id="admin-templates-container"></div>
+    <div class="admin-add-row" style="margin-top:14px;">
+      <input type="text" id="admin-new-template-key" placeholder="New template key (e.g. easter_promo)">
+      <button class="admin-btn primary" onclick="addNewTemplate()">+ Create Template</button>
+    </div>
   </div>
 
   <div class="stats-bar" id="stats-bar"></div>
@@ -2165,7 +2173,107 @@
     function toggleAdminPanel() {
       var panel = document.getElementById('admin-panel');
       panel.classList.toggle('visible');
-      if (panel.classList.contains('visible')) loadUserList();
+      if (panel.classList.contains('visible')) {
+        loadUserList();
+        renderTemplatesAdmin();
+      }
+    }
+
+    // ─── Master Critical Path templates panel (admin only) ───
+    function renderTemplatesAdmin() {
+      if (_userRole !== 'admin') return;
+      var container = document.getElementById('admin-templates-container');
+      if (!container) return;
+      if (!state.adminTemplatesExpanded) state.adminTemplatesExpanded = {};
+
+      var html = '';
+      var keys = Object.keys(CP_TEMPLATES).sort();
+      if (keys.length === 0) {
+        html = '<p style="color:#6B7280;font-size:13px;">No templates yet. Use "+ Create Template" below to add one.</p>';
+      }
+      keys.forEach(function(key) {
+        var tasks = CP_TEMPLATES[key] || [];
+        var isExp = !!state.adminTemplatesExpanded[key];
+
+        html += '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;margin-bottom:10px;background:#fff;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleAdminTemplate(\'' + key + '\')">';
+        html += '<div><strong style="font-family:monospace;color:#1B365D;">' + escapeHtml(key) + '</strong> <span style="color:#6B7280;font-size:12px;margin-left:8px;">' + tasks.length + ' tasks</span></div>';
+        html += '<div style="display:flex;gap:8px;align-items:center;">';
+        html += '<button onclick="event.stopPropagation();deleteTemplate(\'' + key + '\')" class="admin-btn danger" style="font-size:11px;">Delete Template</button>';
+        html += '<span style="font-size:14px;color:#666;width:14px;text-align:center;">' + (isExp ? '▾' : '▸') + '</span>';
+        html += '</div>';
+        html += '</div>';
+
+        if (isExp) {
+          html += '<table class="cp-task-table" style="margin-top:12px;">';
+          html += '<thead><tr>'
+            + '<th style="width:42%;">Task</th>'
+            + '<th style="width:11%;">Lead</th>'
+            + '<th style="width:11%;">Owner</th>'
+            + '<th style="width:24%;">Workstream</th>'
+            + '<th style="width:6%;">Action</th>'
+            + '</tr></thead><tbody>';
+          tasks.forEach(function(t, i) {
+            var inputStyle = 'width:100%;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;';
+            html += '<tr>';
+            html += '<td><input type="text" value="' + escapeHtml(t.task) + '" oninput="cpEditField(\'' + key + '\',' + i + ',\'task\',this.value)" style="' + inputStyle + '"></td>';
+            html += '<td><input type="text" value="' + escapeHtml(t.lead) + '" oninput="cpEditField(\'' + key + '\',' + i + ',\'lead\',this.value)" style="' + inputStyle + '" placeholder="6 wks, D-Day, +3 days"></td>';
+            html += '<td><select onchange="cpEditField(\'' + key + '\',' + i + ',\'owner\',this.value)" style="' + inputStyle + '">';
+            ['product','content','email','paid','site','social'].forEach(function(o) {
+              html += '<option value="' + o + '"' + (t.owner === o ? ' selected' : '') + '>' + o + '</option>';
+            });
+            html += '</select></td>';
+            html += '<td><input type="text" value="' + escapeHtml(t.ws) + '" oninput="cpEditField(\'' + key + '\',' + i + ',\'ws\',this.value)" style="' + inputStyle + '"></td>';
+            html += '<td><button onclick="cpDeleteTask(\'' + key + '\',' + i + ')" class="admin-btn danger" style="font-size:11px;padding:3px 8px;">✕</button></td>';
+            html += '</tr>';
+          });
+          html += '</tbody></table>';
+          html += '<div style="margin-top:10px;display:flex;gap:8px;">';
+          html += '<button onclick="cpAddTask(\'' + key + '\')" class="admin-btn">+ Add Task</button>';
+          html += '<button onclick="cpSaveTemplate(\'' + key + '\')" class="admin-btn primary">💾 Save</button>';
+          html += '</div>';
+        }
+
+        html += '</div>';
+      });
+
+      container.innerHTML = html;
+    }
+
+    function toggleAdminTemplate(key) {
+      if (!state.adminTemplatesExpanded) state.adminTemplatesExpanded = {};
+      state.adminTemplatesExpanded[key] = !state.adminTemplatesExpanded[key];
+      renderTemplatesAdmin();
+    }
+
+    function addNewTemplate() {
+      if (_userRole !== 'admin') { alert('Admins only.'); return; }
+      var input = document.getElementById('admin-new-template-key');
+      var raw = ((input && input.value) || '').trim();
+      if (!raw) { alert('Enter a template key first.'); return; }
+      // Sanitise to lowercase + underscores (Firebase-safe key)
+      var key = raw.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+      if (!key) { alert('Template key must contain letters or numbers.'); return; }
+      if (CP_TEMPLATES[key]) { alert('Template "' + key + '" already exists.'); return; }
+      CP_TEMPLATES[key] = [];
+      if (input) input.value = '';
+      state.adminTemplatesExpanded = state.adminTemplatesExpanded || {};
+      state.adminTemplatesExpanded[key] = true;
+      // Persist immediately so the empty template is created in Firebase
+      firebase.database().ref(BRAND_KEY + '/cp_templates/' + key).set({})
+        .then(function() { renderTemplatesAdmin(); })
+        .catch(function(e) { alert('Save failed: ' + (e && e.message ? e.message : e)); });
+    }
+
+    function deleteTemplate(key) {
+      if (_userRole !== 'admin') { alert('Admins only.'); return; }
+      var tasks = CP_TEMPLATES[key] || [];
+      if (!confirm('Delete template "' + key + '" (' + tasks.length + ' tasks)? Events that mapped to this template will fall back to "major_sale". This cannot be undone.')) return;
+      delete CP_TEMPLATES[key];
+      if (state.adminTemplatesExpanded) delete state.adminTemplatesExpanded[key];
+      firebase.database().ref(BRAND_KEY + '/cp_templates/' + key).remove()
+        .then(function() { renderTemplatesAdmin(); render(); })
+        .catch(function(e) { alert('Delete failed: ' + (e && e.message ? e.message : e)); });
     }
 
     function loadUserList() {
@@ -2305,7 +2413,7 @@
         // Load live Shopify data from pipeline
         loadShopifyDataFromFirebase(); loadWeeklyShopifyFromFirebase(); loadMetaSpendFromFirebase(); loadGoogleSpendFromFirebase();
         loadMonthlyMetaFromFirebase(); loadMonthlyGoogleFromFirebase(); loadMonthlyInsightsFromFirebase();
-        loadWeeklyInsightsFromFirebase(); loadMarginsFromFirebase();
+        loadWeeklyInsightsFromFirebase(); loadMarginsFromFirebase(); loadCriticalPathTemplatesFromFirebase();
       } catch(e) {
         console.error('Firebase init failed:', e);
         _syncStatus = 'offline';
@@ -2436,6 +2544,30 @@
             render();
           });
         } catch(e) { console.warn('Weekly insights load failed:', e); }
+      }
+
+      // Critical path templates — admin-editable. Reads {BRAND_KEY}/cp_templates
+      // and overlays onto the hardcoded fallback (so a brand with no Firebase
+      // data still has working defaults from USPA's playbook).
+      function loadCriticalPathTemplatesFromFirebase() {
+        if (!firebase.auth().currentUser) return;
+        try {
+          firebase.database().ref(BRAND_KEY + '/cp_templates').once('value', function(snap) {
+            var data = snap.val();
+            if (!data) { console.log('No CP templates in Firebase yet (admin can edit and save to seed them)'); return; }
+            Object.keys(data).forEach(function(key) {
+              var t = data[key];
+              if (Array.isArray(t)) {
+                CP_TEMPLATES[key] = t;
+              } else if (t && typeof t === 'object') {
+                // Firebase converts arrays to objects with numeric keys; convert back
+                CP_TEMPLATES[key] = Object.keys(t).sort(function(a,b){return parseInt(a)-parseInt(b);}).map(function(k){return t[k];});
+              }
+            });
+            console.log('CP templates loaded from Firebase:', Object.keys(data).length);
+            render();
+          });
+        } catch(e) { console.warn('CP templates load failed:', e); }
       }
 
       // Margins (GM%, MD%, planned discount%) — sourced from margins.csv via the
@@ -3788,7 +3920,9 @@
     // ============================================================================
 
     // Critical path templates by event category
-    var CP_TEMPLATES = {
+    // Critical path templates — hardcoded fallback. Admins can edit via the
+    // Critical Path view; saves go to {BRAND_KEY}/cp_templates in Firebase.
+    let CP_TEMPLATES = {
       "major_sale": [
         {task:"Confirm discount strategy & margin sign-off",lead:"6 wks",owner:"product",ws:"Product"},
         {task:"Finalise hero product selection & imagery brief",lead:"5 wks",owner:"product",ws:"Product"},
@@ -3915,6 +4049,68 @@
     function getOwnerCls(owner) {
       var map = {product:'cp-owner-product',content:'cp-owner-content',email:'cp-owner-email',paid:'cp-owner-paid',site:'cp-owner-site',social:'cp-owner-social'};
       return map[owner] || 'cp-owner-product';
+    }
+
+    // Tiny HTML escape — used for safe inline rendering of user-edited template fields
+    function escapeHtml(s) {
+      if (s == null) return '';
+      return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+
+    // ─── Admin: critical-path template editing ───
+    function cpStartEditing(templateKey) {
+      if (_userRole !== 'admin') { alert('Admins only.'); return; }
+      state.cpAdminEditing = templateKey;
+      render();
+    }
+    function cpEditField(templateKey, idx, field, value) {
+      if (_userRole !== 'admin') return;
+      var t = CP_TEMPLATES[templateKey];
+      if (!t || !t[idx]) return;
+      t[idx][field] = value;
+      // Don't re-render — keeps the input focused while typing.
+    }
+    // Refresh admin templates panel if it's currently visible
+    function _refreshAdminTemplatesIfOpen() {
+      var panel = document.getElementById('admin-panel');
+      if (panel && panel.classList.contains('visible')) renderTemplatesAdmin();
+    }
+    function cpAddTask(templateKey) {
+      if (_userRole !== 'admin') return;
+      if (!CP_TEMPLATES[templateKey]) CP_TEMPLATES[templateKey] = [];
+      CP_TEMPLATES[templateKey].push({task: 'New task', lead: '1 wk', owner: 'product', ws: 'Product'});
+      render();
+      _refreshAdminTemplatesIfOpen();
+    }
+    function cpDeleteTask(templateKey, idx) {
+      if (_userRole !== 'admin') return;
+      var t = CP_TEMPLATES[templateKey];
+      if (!t) return;
+      if (!confirm('Delete this task from the template? This affects ALL events using this template.')) return;
+      t.splice(idx, 1);
+      render();
+      _refreshAdminTemplatesIfOpen();
+    }
+    function cpSaveTemplate(templateKey) {
+      if (_userRole !== 'admin') { alert('Admins only.'); return; }
+      if (!firebase.auth().currentUser) { alert('Not signed in.'); return; }
+      var t = CP_TEMPLATES[templateKey];
+      firebase.database().ref(BRAND_KEY + '/cp_templates/' + templateKey).set(t)
+        .then(function() {
+          alert('Saved "' + templateKey + '" template.');
+          state.cpAdminEditing = null;
+          render();
+          _refreshAdminTemplatesIfOpen();
+        })
+        .catch(function(e) { alert('Save failed: ' + (e && e.message ? e.message : e)); });
+    }
+    function cpCancelEdit() {
+      state.cpAdminEditing = null;
+      // Re-fetch from Firebase to discard any local edits
+      loadCriticalPathTemplatesFromFirebase();
+      render();
     }
 
     function calcTaskDate(eventStartStr, lead, eventEndStr) {
@@ -4173,6 +4369,45 @@
         if (isOpen) {
           html += '<div class="cp-body">';
 
+          // ─── Admin edit mode for this template ───
+          if (_userRole === 'admin' && state.cpAdminEditing === ev.template) {
+            html += '<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;">';
+            html += '<strong>✏️ Editing template: <code>' + ev.template + '</code></strong> — changes propagate to ALL events using this template.';
+            html += '</div>';
+            html += '<table class="cp-task-table">';
+            html += '<thead><tr>'
+              + '<th style="width:40%;">Task</th>'
+              + '<th style="width:10%;">Lead</th>'
+              + '<th style="width:12%;">Owner</th>'
+              + '<th style="width:25%;">Workstream</th>'
+              + '<th style="width:8%;">Action</th>'
+              + '</tr></thead><tbody>';
+            tasks.forEach(function(t, i) {
+              var inputStyle = 'width:100%;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;';
+              html += '<tr>';
+              html += '<td><input type="text" value="' + escapeHtml(t.task) + '" oninput="cpEditField(\'' + ev.template + '\',' + i + ',\'task\',this.value)" style="' + inputStyle + '"></td>';
+              html += '<td><input type="text" value="' + escapeHtml(t.lead) + '" oninput="cpEditField(\'' + ev.template + '\',' + i + ',\'lead\',this.value)" style="' + inputStyle + '" placeholder="e.g. 6 wks, D-Day, +3 days"></td>';
+              html += '<td><select onchange="cpEditField(\'' + ev.template + '\',' + i + ',\'owner\',this.value)" style="' + inputStyle + '">';
+              ['product','content','email','paid','site','social'].forEach(function(o) {
+                html += '<option value="' + o + '"' + (t.owner === o ? ' selected' : '') + '>' + o + '</option>';
+              });
+              html += '</select></td>';
+              html += '<td><input type="text" value="' + escapeHtml(t.ws) + '" oninput="cpEditField(\'' + ev.template + '\',' + i + ',\'ws\',this.value)" style="' + inputStyle + '"></td>';
+              html += '<td><button onclick="cpDeleteTask(\'' + ev.template + '\',' + i + ')" style="color:#DC2626;background:#fff;border:1px solid #fca5a5;border-radius:4px;padding:4px 8px;cursor:pointer;font-size:11px;">✕</button></td>';
+              html += '</tr>';
+            });
+            html += '</tbody></table>';
+            html += '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">';
+            html += '<button onclick="cpAddTask(\'' + ev.template + '\')" style="padding:6px 12px;background:#fff;border:1px solid #1B365D;color:#1B365D;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">+ Add Task</button>';
+            html += '<button onclick="cpSaveTemplate(\'' + ev.template + '\')" style="padding:6px 14px;background:#1B365D;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">💾 Save Template</button>';
+            html += '<button onclick="cpCancelEdit()" style="padding:6px 12px;background:#fff;border:1px solid #ddd;color:#666;border-radius:6px;cursor:pointer;font-size:12px;">Cancel</button>';
+            html += '</div>'; // close button row
+            html += '</div>'; // close cp-body
+            html += '</div>'; // close cp-event-card
+            return; // skip the read-only render below for this event
+          }
+
+          // ─── Read-only render (and "Edit Template" button for admins) ───
           // Group tasks by workstream
           var wsGroups = {};
           tasks.forEach(function(t) {
@@ -4235,6 +4470,13 @@
             });
             html += '</tbody></table>';
           });
+
+          // Admin-only "Edit Template" entry point
+          if (_userRole === 'admin') {
+            html += '<div style="margin-top:12px;text-align:right;">';
+            html += '<button onclick="cpStartEditing(\'' + ev.template + '\')" style="padding:6px 12px;background:#fff;border:1px solid #1B365D;color:#1B365D;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">✏️ Edit Template</button>';
+            html += '</div>';
+          }
 
           html += '</div>';
         }
