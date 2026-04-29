@@ -1433,6 +1433,19 @@
 
   <script>
     // ============================================================================
+    // BRAND CONFIG — multi-tenant support
+    // ============================================================================
+    // BRAND_KEY namespaces every Firebase path so this dashboard can be deployed
+    // for any brand by changing one line (or via ?brand=xxx URL param).
+    // - Data paths:    BRAND_KEY/{klaviyo,shopify,meta,google}_data/...
+    // - Auth/state:    BRAND_PLANNER_KEY/users, BRAND_PLANNER_KEY/state
+    // - LocalStorage:  BRAND_LOCAL_KEY (offline cache)
+    const BRAND_KEY = (new URLSearchParams(location.search)).get('brand') || 'uspa_au';
+    const BRAND_PLANNER_KEY = BRAND_KEY + '_planner';
+    const BRAND_LOCAL_KEY = BRAND_KEY + '_promo_planner';
+    console.log('🏷️ Brand:', BRAND_KEY);
+
+    // ============================================================================
     // REAL DATA
     // ============================================================================
 
@@ -1463,24 +1476,35 @@
       "2026-04": {rev:45987,orders:297,units:717}
     };
 
-    const META_SPEND = {
+    // Monthly ad spend — hardcoded fallbacks; overwritten live from Firebase
+    // (see loadMonthlyMetaFromFirebase / loadMonthlyGoogleFromFirebase below).
+    let META_SPEND = {
       "2025-04": 6424, "2025-05": 11291, "2025-06": 15124, "2025-07": 8280,
       "2025-08": 12067, "2025-09": 10090, "2025-10": 10397, "2025-11": 24371,
       "2025-12": 14007, "2026-01": 10059, "2026-02": 7958, "2026-03": 9524, "2026-04": 1836
     };
 
-    const GOOGLE_SPEND = {
+    let GOOGLE_SPEND = {
       "2025-03": 2407, "2025-04": 12814, "2025-05": 9864, "2025-06": 13046,
       "2025-07": 11955, "2025-08": 26865, "2025-09": 14320, "2025-10": 20637,
       "2025-11": 121744, "2025-12": 92392, "2026-01": 40085, "2026-02": 26952,
       "2026-03": 33178, "2026-04": 5847
     };
 
-    const GOOGLE_CONVERSIONS = {
+    let GOOGLE_CONVERSIONS = {
       "2025-03": 5, "2025-04": 40, "2025-05": 84, "2025-06": 164, "2025-07": 174,
       "2025-08": 415, "2025-09": 279, "2025-10": 375, "2025-11": 2215, "2025-12": 1929,
       "2026-01": 951, "2026-02": 543, "2026-03": 713, "2026-04": 60
     };
+
+    // Per-month Meta revenue/purchases (loaded live; no fallback).
+    let META_MONTHLY_REVENUE = {};
+    let META_MONTHLY_PURCHASES = {};
+
+    // Unified multi-channel monthly view from {BRAND_KEY}/monthly_insights.
+    // Shape: { "2025-08": { shopify, klaviyo, meta, google, totals: { ad_spend, blended_roas, klaviyo_revenue_share } } }
+    // Written by the agent's sync_monthly_insights tool.
+    let MONTHLY_INSIGHTS = {};
 
     const AOV = 85;
     const MARGIN_RATE = 0.55; // 55% gross margin before discount
@@ -1488,7 +1512,7 @@
     // Load live Shopify data from Firebase pipeline (overwrites static fallbacks)
     function loadShopifyDataFromFirebase() {
       if (!firebase.auth().currentUser) return;
-      var monthlyRef = firebase.database().ref('uspa_au/shopify_data/monthly');
+      var monthlyRef = firebase.database().ref(BRAND_KEY + '/shopify_data/monthly');
       monthlyRef.once('value', function(snapshot) {
         var data = snapshot.val();
         if (!data) { console.log('No Shopify pipeline data in Firebase yet'); return; }
@@ -2016,7 +2040,7 @@
 
     function onUserLoggedIn(user) {
       // Check user role from database
-      var rolesRef = firebase.database().ref('uspa_au_planner/users/' + encodeEmailKey(user.email));
+      var rolesRef = firebase.database().ref(BRAND_PLANNER_KEY + '/users/' + encodeEmailKey(user.email));
       rolesRef.once('value').then(function(snap) {
         var userData = snap.val();
         if (!userData) {
@@ -2139,7 +2163,7 @@
     function loadUserList() {
       var tbody = document.getElementById('admin-user-tbody');
       tbody.innerHTML = '<tr><td colspan="4">Loading...</td></tr>';
-      firebase.database().ref('uspa_au_planner/users').once('value').then(function(snap) {
+      firebase.database().ref(BRAND_PLANNER_KEY + '/users').once('value').then(function(snap) {
         var users = snap.val() || {};
         tbody.innerHTML = '';
         Object.keys(users).forEach(function(key) {
@@ -2182,7 +2206,7 @@
       secondaryApp.auth().createUserWithEmailAndPassword(email, password).then(function(cred) {
         // Add user to database
         var userKey = encodeEmailKey(email);
-        return firebase.database().ref('uspa_au_planner/users/' + userKey).set({
+        return firebase.database().ref(BRAND_PLANNER_KEY + '/users/' + userKey).set({
           email: email, role: role, created: new Date().toISOString(), uid: cred.user.uid
         }).then(function() {
           // Sign out the secondary app
@@ -2197,7 +2221,7 @@
         if (err.code === 'auth/email-already-in-use') {
           // User exists in Auth, just register them in our DB
           var userKey = encodeEmailKey(email);
-          firebase.database().ref('uspa_au_planner/users/' + userKey).set({
+          firebase.database().ref(BRAND_PLANNER_KEY + '/users/' + userKey).set({
             email: email, role: role, created: new Date().toISOString()
           }).then(function() {
             msgEl.textContent = 'User ' + email + ' registered (account already existed).'; msgEl.style.color = '#059669';
@@ -2213,7 +2237,7 @@
 
     function removeUser(key, email) {
       if (!confirm('Remove ' + email + ' from the team? They will no longer be able to log in.')) return;
-      firebase.database().ref('uspa_au_planner/users/' + key).remove().then(function() {
+      firebase.database().ref(BRAND_PLANNER_KEY + '/users/' + key).remove().then(function() {
         loadUserList();
         document.getElementById('admin-msg').textContent = email + ' removed.';
         document.getElementById('admin-msg').style.color = '#059669';
@@ -2241,7 +2265,7 @@
       }
       try {
         // App already initialized in initAuth(), just set up database ref
-        _firebaseRef = firebase.database().ref('uspa_au_planner/state');
+        _firebaseRef = firebase.database().ref(BRAND_PLANNER_KEY + '/state');
         _firebaseReady = true;
 
         // Listen for real-time changes from other users
@@ -2253,7 +2277,7 @@
               if (data[f] !== undefined) state[f] = data[f];
             });
             // Also save to localStorage as cache
-            try { localStorage.setItem('uspa_au_promo_planner', JSON.stringify(data)); } catch(e) {}
+            try { localStorage.setItem(BRAND_LOCAL_KEY, JSON.stringify(data)); } catch(e) {}
             _syncStatus = 'synced';
             updateSyncIndicator();
             render();
@@ -2272,6 +2296,7 @@
 
         // Load live Shopify data from pipeline
         loadShopifyDataFromFirebase(); loadWeeklyShopifyFromFirebase(); loadMetaSpendFromFirebase(); loadGoogleSpendFromFirebase();
+        loadMonthlyMetaFromFirebase(); loadMonthlyGoogleFromFirebase(); loadMonthlyInsightsFromFirebase();
       } catch(e) {
         console.error('Firebase init failed:', e);
         _syncStatus = 'offline';
@@ -2284,7 +2309,7 @@
     function loadWeeklyShopifyFromFirebase() {
         if (!firebase.auth().currentUser) return;
         try {
-          firebase.database().ref('uspa_au/shopify_data/weekly').once('value', function(snap) {
+          firebase.database().ref(BRAND_KEY + '/shopify_data/weekly').once('value', function(snap) {
             var data = snap.val();
             if (!data) { console.log('No weekly Shopify data in Firebase yet'); return; }
             var count = 0;
@@ -2304,7 +2329,7 @@
       function loadMetaSpendFromFirebase() {
         if (!firebase.auth().currentUser) return;
         try {
-          firebase.database().ref('uspa_au/meta_data/weekly').once('value', function(snap) {
+          firebase.database().ref(BRAND_KEY + '/meta_data/weekly').once('value', function(snap) {
             var data = snap.val();
             if (!data) { console.log('No Meta spend data in Firebase yet'); return; }
             var count = 0;
@@ -2322,7 +2347,7 @@
       function loadGoogleSpendFromFirebase() {
         if (!firebase.auth().currentUser) return;
         try {
-          firebase.database().ref('uspa_au/google_data/weekly').once('value', function(snap) {
+          firebase.database().ref(BRAND_KEY + '/google_data/weekly').once('value', function(snap) {
             var data = snap.val();
             if (!data) { console.log('No Google spend data in Firebase yet'); return; }
             var count = 0;
@@ -2337,10 +2362,64 @@
         } catch(e) { console.warn('Google spend load failed:', e); }
       }
 
+      function loadMonthlyMetaFromFirebase() {
+        if (!firebase.auth().currentUser) return;
+        try {
+          firebase.database().ref(BRAND_KEY + '/meta_data/monthly').once('value', function(snap) {
+            var data = snap.val();
+            if (!data) { console.log('No monthly Meta data in Firebase yet'); return; }
+            var count = 0;
+            Object.keys(data).forEach(function(monthKey) {
+              var m = data[monthKey];
+              if (!m) return;
+              if (typeof m.spend === 'number') META_SPEND[monthKey] = m.spend;
+              if (typeof m.revenue === 'number') META_MONTHLY_REVENUE[monthKey] = m.revenue;
+              if (typeof m.purchases === 'number') META_MONTHLY_PURCHASES[monthKey] = m.purchases;
+              count++;
+            });
+            console.log('Monthly Meta updated from Firebase:', count, 'months');
+            render();
+          });
+        } catch(e) { console.warn('Monthly Meta load failed:', e); }
+      }
+
+      function loadMonthlyGoogleFromFirebase() {
+        if (!firebase.auth().currentUser) return;
+        try {
+          firebase.database().ref(BRAND_KEY + '/google_data/monthly').once('value', function(snap) {
+            var data = snap.val();
+            if (!data) { console.log('No monthly Google data in Firebase yet'); return; }
+            var count = 0;
+            Object.keys(data).forEach(function(monthKey) {
+              var g = data[monthKey];
+              if (!g) return;
+              if (typeof g.spend === 'number') GOOGLE_SPEND[monthKey] = g.spend;
+              if (typeof g.conversions === 'number') GOOGLE_CONVERSIONS[monthKey] = g.conversions;
+              count++;
+            });
+            console.log('Monthly Google updated from Firebase:', count, 'months');
+            render();
+          });
+        } catch(e) { console.warn('Monthly Google load failed:', e); }
+      }
+
+      function loadMonthlyInsightsFromFirebase() {
+        if (!firebase.auth().currentUser) return;
+        try {
+          firebase.database().ref(BRAND_KEY + '/monthly_insights').once('value', function(snap) {
+            var data = snap.val();
+            if (!data) { console.log('No unified monthly_insights in Firebase yet (run sync_monthly_insights in the agent)'); return; }
+            MONTHLY_INSIGHTS = data;
+            console.log('Monthly insights loaded from Firebase:', Object.keys(data).length, 'months');
+            render();
+          });
+        } catch(e) { console.warn('Monthly insights load failed:', e); }
+      }
+
       function loadKlaviyoDataFromFirebase() {
       if (!_firebaseReady) return;
       try {
-        firebase.database().ref('uspa_au/klaviyo_data/monthly').once('value', function(snap) {
+        firebase.database().ref(BRAND_KEY + '/klaviyo_data/monthly').once('value', function(snap) {
           var data = snap.val();
           if (!data) { console.log('No Klaviyo data in Firebase yet'); return; }
           // Firebase returns {YYYY-MM: [array of campaigns]}
@@ -2364,7 +2443,7 @@
 
     function loadWeeklyDataFromFirebase() {
       if (!firebase.auth().currentUser) return;
-      var weeklyRef = firebase.database().ref('uspa_au/shopify_data/weekly');
+      var weeklyRef = firebase.database().ref(BRAND_KEY + '/shopify_data/weekly');
       weeklyRef.once('value', function(snapshot) {
         var data = snapshot.val();
         if (!data) { console.log('No weekly Shopify data in Firebase yet'); return; }
@@ -2382,7 +2461,7 @@
         console.log('Weekly orders updated: ' + Object.keys(data.orders || {}).length + ' weeks');
         render();
       });
-      var googleWeeklyRef = firebase.database().ref('uspa_au/google_data/weekly');
+      var googleWeeklyRef = firebase.database().ref(BRAND_KEY + '/google_data/weekly');
       googleWeeklyRef.once('value', function(snapshot) {
         var data = snapshot.val();
         if (!data) { console.log('No weekly Google data in Firebase yet'); return; }
@@ -2393,7 +2472,7 @@
         console.log('Weekly Google spend updated: ' + Object.keys(data).length + ' weeks');
         render();
       });
-      var metaWeeklyRef = firebase.database().ref('uspa_au/meta_data/weekly');
+      var metaWeeklyRef = firebase.database().ref(BRAND_KEY + '/meta_data/weekly');
       metaWeeklyRef.once('value', function(snapshot) {
         var data = snapshot.val();
         if (!data) { console.log('No weekly Meta data in Firebase yet'); return; }
@@ -2430,7 +2509,7 @@
     // Load from localStorage as initial cache (instant, before Firebase connects)
     (function loadLocalCache() {
       try {
-        var raw = localStorage.getItem('uspa_au_promo_planner');
+        var raw = localStorage.getItem(BRAND_LOCAL_KEY);
         if (raw) {
           var data = JSON.parse(raw);
           PERSIST_FIELDS.forEach(function(f) {
@@ -2447,7 +2526,7 @@
         PERSIST_FIELDS.forEach(function(f) {
           if (state[f] !== undefined && state[f] !== null) data[f] = state[f];
         });
-        localStorage.setItem('uspa_au_promo_planner', JSON.stringify(data));
+        localStorage.setItem(BRAND_LOCAL_KEY, JSON.stringify(data));
       } catch(e) {}
 
       // Debounced save to Firebase (prevents flooding on rapid changes)
@@ -2828,9 +2907,78 @@
     // RENDER FUNCTIONS
     // ============================================================================
 
+    // Build a small badge HTML helper (used by FY totals + per-month insights)
+    function _insightBadge(label, value, sub, color) {
+      sub = sub || '';
+      color = color || '#1B365D';
+      return '<div style="flex:1;min-width:120px;background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:10px 14px;">'
+        + '<div style="font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:0.04em;">' + label + '</div>'
+        + '<div style="font-size:20px;font-weight:700;color:' + color + ';margin-top:2px;">' + value + '</div>'
+        + (sub ? '<div style="font-size:11px;color:#6B7280;margin-top:2px;">' + sub + '</div>' : '')
+        + '</div>';
+    }
+
+    // Aggregate MONTHLY_INSIGHTS over an array of {key} months → totals
+    function getInsightsTotals(monthKeys) {
+      var t = { revenue: 0, klaviyo_revenue: 0, meta_spend: 0, google_spend: 0, ad_spend: 0, months_with_data: 0 };
+      monthKeys.forEach(function(k) {
+        var mi = MONTHLY_INSIGHTS && MONTHLY_INSIGHTS[k];
+        if (!mi) return;
+        t.months_with_data++;
+        if (mi.shopify) t.revenue += (mi.shopify.revenue || 0);
+        if (mi.klaviyo) t.klaviyo_revenue += (mi.klaviyo.revenue || 0);
+        if (mi.meta)    t.meta_spend += (mi.meta.spend || 0);
+        if (mi.google)  t.google_spend += (mi.google.spend || 0);
+        if (mi.totals)  t.ad_spend += (mi.totals.ad_spend || 0);
+      });
+      // Fallback: if no monthly_insights data yet, compute ad_spend from the
+      // legacy META_SPEND/GOOGLE_SPEND maps so the panel still has something to show.
+      if (t.months_with_data === 0) {
+        monthKeys.forEach(function(k) {
+          t.meta_spend += (META_SPEND[k] || 0);
+          t.google_spend += (GOOGLE_SPEND[k] || 0);
+          var sm = SHOPIFY_MONTHLY[k];
+          if (sm) t.revenue += (sm.rev || 0);
+        });
+        t.ad_spend = t.meta_spend + t.google_spend;
+      }
+      t.blended_roas = t.ad_spend > 0 ? t.revenue / t.ad_spend : 0;
+      t.klaviyo_share = t.revenue > 0 ? t.klaviyo_revenue / t.revenue : 0;
+      return t;
+    }
+
     function renderAnnualCalendar() {
       var fyMonths = getFYMonths(state.selectedFY);
-      let html = '<div class="calendar-grid">';
+      let html = '';
+
+      // ──────────────────────────────────────────────
+      // FY TOTALS — multi-channel summary for selected FY
+      // ──────────────────────────────────────────────
+      var fyKeys = fyMonths.map(function(m) { return m.key; });
+      var ft = getInsightsTotals(fyKeys);
+      var fyLabel = (FY_DEFS[state.selectedFY] || {}).label || state.selectedFY;
+      var liveCount = (typeof MONTHLY_INSIGHTS === 'object') ? Object.keys(MONTHLY_INSIGHTS).length : 0;
+      var sourceNote = liveCount > 0
+        ? 'Live from Firebase · ' + ft.months_with_data + '/' + fyMonths.length + ' months with unified data'
+        : 'Fallback (legacy spend tables) — run sync_monthly_insights in the agent for blended ROAS & Klaviyo share';
+      var roasColor = ft.blended_roas >= 3 ? '#059669' : ft.blended_roas >= 2 ? '#D97706' : '#DC2626';
+
+      html += '<div style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:10px;padding:16px;margin-bottom:20px;">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">';
+      html += '<div style="font-size:14px;font-weight:700;color:#1B365D;">' + fyLabel + ' — Multi-Channel Totals</div>';
+      html += '<div style="font-size:11px;color:#6B7280;">' + sourceNote + '</div>';
+      html += '</div>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:10px;">';
+      html += _insightBadge('Revenue (ex-tax)', formatCurrency(ft.revenue));
+      html += _insightBadge('Total Ad Spend', formatCurrency(ft.ad_spend),
+        'Meta ' + formatCurrency(ft.meta_spend) + ' · Google ' + formatCurrency(ft.google_spend));
+      html += _insightBadge('Blended ROAS', ft.blended_roas > 0 ? ft.blended_roas.toFixed(2) + 'x' : '—', '', roasColor);
+      html += _insightBadge('Klaviyo Revenue',
+        ft.klaviyo_revenue > 0 ? formatCurrency(ft.klaviyo_revenue) : '—',
+        ft.klaviyo_share > 0 ? (ft.klaviyo_share * 100).toFixed(1) + '% of total revenue' : '');
+      html += '</div></div>';
+
+      html += '<div class="calendar-grid">';
 
       for (let mi = 0; mi < fyMonths.length; mi++) {
         const year = fyMonths[mi].year;
@@ -2960,6 +3108,37 @@
       html += '<div class="month-expanded">';
       html += '<div style="margin-bottom:20px;">';
       html += '<div class="month-expanded-title">' + monthName + ' ' + year + ' — Detailed Plan</div>';
+      html += '</div>';
+
+      // === MULTI-CHANNEL SUMMARY (this month) ===
+      var miRow = MONTHLY_INSIGHTS && MONTHLY_INSIGHTS[monthKey];
+      var mt = getInsightsTotals([monthKey]);
+      var mRoasColor = mt.blended_roas >= 3 ? '#059669' : mt.blended_roas >= 2 ? '#D97706' : '#DC2626';
+      var mNote = miRow
+        ? 'Live unified insights from Firebase'
+        : 'Fallback (legacy spend tables) — run sync_monthly_insights in the agent';
+      var mKlavCampaigns = miRow && miRow.klaviyo ? (miRow.klaviyo.campaigns || 0) : 0;
+      var mMetaPurchases = miRow && miRow.meta    ? (miRow.meta.purchases || 0)    : 0;
+      var mGoogleConv    = miRow && miRow.google  ? (miRow.google.conversions || 0): (GOOGLE_CONVERSIONS[monthKey] || 0);
+
+      html += '<div class="timeline-section" style="margin-bottom:20px;">';
+      html += '<div class="section-title" style="display:flex;justify-content:space-between;align-items:baseline;">';
+      html += '<span>Multi-Channel Summary</span>';
+      html += '<span style="font-size:11px;font-weight:500;color:#6B7280;">' + mNote + '</span>';
+      html += '</div>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;">';
+      html += _insightBadge('Revenue', formatCurrency(mt.revenue));
+      html += _insightBadge('Ad Spend', formatCurrency(mt.ad_spend),
+        'Meta ' + formatCurrency(mt.meta_spend) + ' · Google ' + formatCurrency(mt.google_spend));
+      html += _insightBadge('Blended ROAS', mt.blended_roas > 0 ? mt.blended_roas.toFixed(2) + 'x' : '—', '', mRoasColor);
+      html += _insightBadge('Klaviyo',
+        mt.klaviyo_revenue > 0 ? formatCurrency(mt.klaviyo_revenue) : '—',
+        (mt.klaviyo_share > 0 ? (mt.klaviyo_share * 100).toFixed(1) + '% share' : '')
+        + (mKlavCampaigns > 0 ? ' · ' + mKlavCampaigns + ' campaigns' : ''));
+      html += _insightBadge('Conversions',
+        (mMetaPurchases + mGoogleConv) > 0 ? (mMetaPurchases + mGoogleConv).toLocaleString() : '—',
+        'Meta ' + mMetaPurchases.toLocaleString() + ' · Google ' + Math.round(mGoogleConv).toLocaleString());
+      html += '</div>';
       html += '</div>';
 
       // === ACTIVE PROMOTIONS (all editable) ===
