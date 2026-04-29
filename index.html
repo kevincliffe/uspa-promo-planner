@@ -2382,6 +2382,17 @@
         console.log('Weekly orders updated: ' + Object.keys(data.orders || {}).length + ' weeks');
         render();
       });
+      var googleWeeklyRef = firebase.database().ref('uspa_au/google_data/weekly');
+      googleWeeklyRef.once('value', function(snapshot) {
+        var data = snapshot.val();
+        if (!data) { console.log('No weekly Google data in Firebase yet'); return; }
+        console.log('Loading weekly Google spend from Firebase...');
+        Object.keys(data).forEach(function(weekKey) {
+          WEEKLY_GOOGLE_SPEND[weekKey] = data[weekKey];
+        });
+        console.log('Weekly Google spend updated: ' + Object.keys(data).length + ' weeks');
+        render();
+      });
       var metaWeeklyRef = firebase.database().ref('uspa_au/meta_data/weekly');
       metaWeeklyRef.once('value', function(snapshot) {
         var data = snapshot.val();
