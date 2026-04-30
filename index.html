@@ -4102,9 +4102,17 @@
         .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     }
 
-    // Resolve effective task list for an event — override wins, falls back to template
+    // Event IDs include the start year so each financial year's events stay
+    // independent (e.g. "Product Drop #1" in FY26 ≠ "Product Drop #1" in FY27).
     function cpGetEventId(ev) {
-      return ev.name.replace(/[^a-zA-Z0-9]/g, '_');
+      var yearSuffix = ev && ev.start ? ('__' + ev.start.slice(0,4)) : '';
+      return (ev.name || '').replace(/[^a-zA-Z0-9]/g, '_') + yearSuffix;
+    }
+    // Past events are read-only — they've happened, no editing the historical record
+    function cpIsPastEvent(ev) {
+      if (!ev || !ev.end) return false;
+      var today = new Date(); today.setHours(0,0,0,0);
+      return new Date(ev.end + 'T00:00:00') < today;
     }
     function cpGetEventTasks(ev) {
       var evId = cpGetEventId(ev);
@@ -4121,6 +4129,7 @@
     // (Edits CP_EVENT_OVERRIDES[evId] — saves don't touch the shared template.)
     function cpStartEventEdit(ev) {
       if (_userRole !== 'admin') { alert('Admins only.'); return; }
+      if (cpIsPastEvent(ev)) { alert('"' + ev.name + '" is in the past — historical events are locked.'); return; }
       var evId = cpGetEventId(ev);
       // Seed override from current effective tasks if no override exists yet
       if (!CP_EVENT_OVERRIDES[evId] || !CP_EVENT_OVERRIDES[evId].length) {
@@ -4443,22 +4452,28 @@
     function renderEventOverrideCard(ev) {
       var evId = cpGetEventId(ev);
       var hasOv = !!(CP_EVENT_OVERRIDES[evId] && CP_EVENT_OVERRIDES[evId].length);
-      var isExp = !!(state.tplTabEventExpanded && state.tplTabEventExpanded[evId]);
+      var isPast = cpIsPastEvent(ev);
+      var isExp = !isPast && !!(state.tplTabEventExpanded && state.tplTabEventExpanded[evId]);
       var tasks = hasOv ? CP_EVENT_OVERRIDES[evId] : (CP_TEMPLATES[ev.template] || []);
 
-      var html = '<div style="border:1px solid ' + (hasOv ? '#93c5fd' : '#e5e7eb') + ';border-radius:8px;padding:10px 14px;margin-bottom:8px;background:#fff;">';
-      html += '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="tplTabToggleEvent(\'' + evId + '\',' + JSON.stringify({name: ev.name, template: ev.template}).replace(/"/g, "&quot;") + ')">';
+      var borderColor = isPast ? '#e5e7eb' : (hasOv ? '#93c5fd' : '#e5e7eb');
+      var bgColor = isPast ? '#fafafa' : '#fff';
+      var html = '<div style="border:1px solid ' + borderColor + ';border-radius:8px;padding:10px 14px;margin-bottom:8px;background:' + bgColor + ';opacity:' + (isPast ? '0.6' : '1') + ';">';
+      var clickHandler = isPast ? '' : ' onclick="tplTabToggleEvent(\'' + evId + '\',' + JSON.stringify({name: ev.name, template: ev.template, start: ev.start, end: ev.end}).replace(/"/g, "&quot;") + ')"';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;' + (isPast ? '' : 'cursor:pointer;') + '"' + clickHandler + '>';
       html += '<div>';
       html += '<span style="margin-right:6px;">' + ev.icon + '</span>';
       html += '<strong style="font-size:13px;">' + escapeHtml(ev.name) + '</strong>';
       html += '<span style="color:#6B7280;font-size:11px;margin-left:8px;">' + ev.start.slice(5) + ' → ' + ev.end.slice(5) + '</span>';
       html += '<span style="color:#6B7280;font-size:11px;margin-left:8px;">based on <code>' + escapeHtml(ev.template) + '</code></span>';
-      if (hasOv) html += ' <span style="font-size:10px;font-weight:700;background:#dbeafe;color:#1d4ed8;padding:2px 6px;border-radius:4px;margin-left:6px;">Customised</span>';
+      if (isPast) html += ' <span style="font-size:10px;font-weight:700;background:#f3f4f6;color:#6B7280;padding:2px 6px;border-radius:4px;margin-left:6px;">🔒 Past · locked</span>';
+      else if (hasOv) html += ' <span style="font-size:10px;font-weight:700;background:#dbeafe;color:#1d4ed8;padding:2px 6px;border-radius:4px;margin-left:6px;">Customised</span>';
       html += '</div>';
       html += '<div style="display:flex;gap:8px;align-items:center;">';
-      if (hasOv) html += '<button onclick="event.stopPropagation();cpEventResetToDefault(\'' + evId + '\',\'' + escapeHtml(ev.name).replace(/'/g, "\\'") + '\')" class="admin-btn danger" style="font-size:11px;">Revert</button>';
-      html += '<button onclick="event.stopPropagation();cpDeleteEvent(\'' + evId + '\',\'' + escapeHtml(ev.name).replace(/'/g, "\\'") + '\')" class="admin-btn danger" style="font-size:11px;">Delete</button>';
-      html += '<span style="font-size:14px;color:#666;width:14px;text-align:center;">' + (isExp ? '▾' : '▸') + '</span>';
+      if (!isPast) {
+        html += '<button onclick="event.stopPropagation();cpDeleteEvent(\'' + evId + '\',\'' + escapeHtml(ev.name).replace(/'/g, "\\'") + '\')" class="admin-btn danger" style="font-size:11px;">Delete</button>';
+        html += '<span style="font-size:14px;color:#666;width:14px;text-align:center;">' + (isExp ? '▾' : '▸') + '</span>';
+      }
       html += '</div>';
       html += '</div>';
 
@@ -4844,10 +4859,7 @@
             html += '</tbody></table>';
             html += '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">';
             html += '<button onclick="cpEventAddTask(\'' + evId + '\')" style="padding:6px 12px;background:#fff;border:1px solid #1B365D;color:#1B365D;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">+ Add Task</button>';
-            html += '<button onclick="cpEventSaveOverride(\'' + evId + '\',\'' + escapeHtml(ev.name).replace(/'/g, "\\'") + '\')" style="padding:6px 14px;background:#1B365D;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">💾 Save Customisation</button>';
-            if (hasOverride) {
-              html += '<button onclick="cpEventResetToDefault(\'' + evId + '\',\'' + escapeHtml(ev.name).replace(/'/g, "\\'") + '\')" style="padding:6px 12px;background:#fef2f2;border:1px solid #fca5a5;color:#DC2626;border-radius:6px;cursor:pointer;font-size:12px;">Revert to Shared Template</button>';
-            }
+            html += '<button onclick="cpEventSaveOverride(\'' + evId + '\',\'' + escapeHtml(ev.name).replace(/'/g, "\\'") + '\')" style="padding:6px 14px;background:#1B365D;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">💾 Save</button>';
             html += '<button onclick="cpEventCancelEdit()" style="padding:6px 12px;background:#fff;border:1px solid #ddd;color:#666;border-radius:6px;cursor:pointer;font-size:12px;">Cancel</button>';
             html += '</div>';
             html += '</div>'; // close cp-body
@@ -4957,15 +4969,15 @@
             html += '</tbody></table>';
           });
 
-          // Admin-only per-event editing entry points
-          if (_userRole === 'admin') {
+          // Admin-only per-event editing entry point (past events are locked)
+          if (_userRole === 'admin' && !cpIsPastEvent(ev)) {
             html += '<div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">';
-            html += '<button onclick=\'cpStartEventEdit(' + JSON.stringify({name: ev.name, template: ev.template}).replace(/'/g, "&#39;") + ')\' style="padding:6px 12px;background:#fff;border:1px solid #1B365D;color:#1B365D;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">✏️ Customise this event</button>';
-            if (hasOverride) {
-              html += '<button onclick="cpEventResetToDefault(\'' + evId + '\',\'' + escapeHtml(ev.name).replace(/'/g, "\\'") + '\')" style="padding:6px 12px;background:#fef2f2;border:1px solid #fca5a5;color:#DC2626;border-radius:6px;cursor:pointer;font-size:12px;">Revert to Shared</button>';
-            }
-            html += '<span style="font-size:11px;color:#6B7280;align-self:center;">Shared template: <code>' + escapeHtml(ev.template) + '</code> (manage in Admin → Critical Path Templates)</span>';
+            html += '<button onclick=\'cpStartEventEdit(' + JSON.stringify({name: ev.name, template: ev.template, start: ev.start, end: ev.end}).replace(/'/g, "&#39;") + ')\' style="padding:6px 12px;background:#fff;border:1px solid #1B365D;color:#1B365D;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">✏️ Edit Tasks</button>';
+            html += '<button onclick="cpDeleteEvent(\'' + evId + '\',\'' + escapeHtml(ev.name).replace(/'/g, "\\'") + '\')" style="padding:6px 12px;background:#fef2f2;border:1px solid #fca5a5;color:#DC2626;border-radius:6px;cursor:pointer;font-size:12px;">Delete Event</button>';
             html += '</div>';
+          }
+          if (cpIsPastEvent(ev)) {
+            html += '<div style="margin-top:12px;text-align:right;font-size:11px;color:#6B7280;">🔒 Past event — read-only</div>';
           }
 
           html += '</div>';
