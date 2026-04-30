@@ -1391,6 +1391,7 @@
     <button class="nav-btn" data-tab="weekly">Weekly Planner</button>
     <button class="nav-btn" data-tab="simulator" style="display:none;">Promo Simulator</button>
     <button class="nav-btn" data-tab="critpath">Critical Path</button>
+    <button class="nav-btn" data-tab="templates" id="templates-tab-btn" style="display:none;">Templates</button>
     <button class="nav-btn" data-tab="insights">Insights & Learnings</button>
     <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
       <span id="sync-status" style="font-size:11px;font-weight:600;padding:4px 10px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;"><span style="color:#D97706;">● Connecting...</span></span>
@@ -1422,14 +1423,7 @@
       <button class="admin-btn primary" onclick="addNewUser()">Add User</button>
     </div>
     <p id="admin-msg" style="font-size:12px;margin-top:8px;min-height:18px;"></p>
-
-    <h3 style="margin-top:28px;">Critical Path Templates</h3>
-    <p style="font-size:12px;color:#6B7280;margin-bottom:12px;">Manage the master task lists that drive every event's critical path. Edits propagate to ALL events using each template. Saved to Firebase per brand.</p>
-    <div id="admin-templates-container"></div>
-    <div class="admin-add-row" style="margin-top:14px;">
-      <input type="text" id="admin-new-template-key" placeholder="New template key (e.g. easter_promo)">
-      <button class="admin-btn primary" onclick="addNewTemplate()">+ Create Template</button>
-    </div>
+    <p style="font-size:12px;color:#6B7280;margin-top:18px;">📋 Looking for Critical Path Templates? They live in their own <strong>Templates</strong> tab in the main nav now.</p>
   </div>
 
   <div class="stats-bar" id="stats-bar"></div>
@@ -2092,6 +2086,8 @@
       document.getElementById('user-email').textContent = user.email;
       if (_userRole === 'admin') {
         document.getElementById('admin-toggle-btn').style.display = '';
+        var tBtn = document.getElementById('templates-tab-btn');
+        if (tBtn) tBtn.style.display = '';
       }
       // Now init the database connection
       initFirebase();
@@ -4307,6 +4303,267 @@
       return {label: 'Upcoming', cls: 'cp-event-future'};
     }
 
+    // Build the same set of events that renderCriticalPath uses, but as a
+    // standalone helper so other tabs can introspect the event universe.
+    function buildCPEventsForFY(fyKey) {
+      var fy = FY_DEFS[fyKey];
+      if (!fy) return [];
+      var fyStart = new Date(fy.startYear, fy.startMonth - 1, 1);
+      var fyEnd = new Date(fy.startYear + 1, fy.startMonth - 1, 0);
+      var out = [];
+
+      AU_KEY_EVENTS.forEach(function(ev) {
+        var evStart = new Date(ev.start);
+        var evEnd = new Date(ev.end);
+        if (evEnd >= fyStart && evStart <= fyEnd && ev.type !== 'event') {
+          out.push({
+            name: ev.name, icon: ev.icon, start: ev.start, end: ev.end,
+            discount: ev.discount || '', template: getCPTemplate(ev.name), category: 'key_event'
+          });
+        }
+      });
+
+      var ssMonth = fy.startMonth + 1;
+      var awMonth = fy.startMonth >= 7 ? 2 : 8;
+      var ssYear = fy.startYear;
+      var awYear = fy.startYear + 1;
+      out.push({
+        name: 'SS' + String(ssYear + 1).slice(2) + ' Seasonal Launch', icon: '☀️',
+        start: ssYear + '-' + String(ssMonth + 2).padStart(2,'0') + '-01',
+        end:   ssYear + '-' + String(ssMonth + 3).padStart(2,'0') + '-01',
+        discount: '', template: 'seasonal_launch', category: 'seasonal'
+      });
+      out.push({
+        name: 'AW' + String(awYear).slice(2) + ' Seasonal Launch', icon: '🍂',
+        start: awYear + '-' + String(awMonth).padStart(2,'0') + '-15',
+        end:   awYear + '-' + String(awMonth + 1).padStart(2,'0') + '-15',
+        discount: '', template: 'seasonal_launch', category: 'seasonal'
+      });
+
+      var dropDate = new Date(fyStart);
+      var dow = dropDate.getDay();
+      if (dow !== 1) dropDate.setDate(dropDate.getDate() + (dow === 0 ? 1 : 8 - dow));
+      var dropNum = 1;
+      while (dropDate <= fyEnd) {
+        var dStr = dropDate.getFullYear() + '-' + String(dropDate.getMonth()+1).padStart(2,'0') + '-' + String(dropDate.getDate()).padStart(2,'0');
+        var dEnd = new Date(dropDate); dEnd.setDate(dEnd.getDate() + 3);
+        var eStr = dEnd.getFullYear() + '-' + String(dEnd.getMonth()+1).padStart(2,'0') + '-' + String(dEnd.getDate()).padStart(2,'0');
+        out.push({
+          name: 'Product Drop #' + dropNum, icon: '📦',
+          start: dStr, end: eStr, discount: '', template: 'product_drop', category: 'drop'
+        });
+        dropNum++; dropDate.setDate(dropDate.getDate() + 14);
+      }
+
+      out.sort(function(a,b) { return a.start < b.start ? -1 : a.start > b.start ? 1 : 0; });
+      return out;
+    }
+
+    // Inline shared-template editor card (used by Templates tab)
+    function renderSharedTemplateCard(key, eventCount) {
+      var tasks = CP_TEMPLATES[key] || [];
+      var isExp = !!(state.tplTabExpanded && state.tplTabExpanded[key]);
+
+      var html = '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:14px 18px;margin-bottom:12px;background:#fff;">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="tplTabToggle(\'' + key + '\')">';
+      html += '<div>';
+      html += '<strong style="font-family:monospace;color:#1B365D;font-size:14px;">' + escapeHtml(key) + '</strong>';
+      html += ' <span style="color:#6B7280;font-size:12px;margin-left:10px;">' + tasks.length + ' tasks · used by ' + eventCount + ' event' + (eventCount === 1 ? '' : 's') + '</span>';
+      html += '</div>';
+      html += '<div style="display:flex;gap:8px;align-items:center;">';
+      html += '<button onclick="event.stopPropagation();deleteTemplate(\'' + key + '\')" class="admin-btn danger" style="font-size:11px;">Delete</button>';
+      html += '<span style="font-size:14px;color:#666;width:14px;text-align:center;">' + (isExp ? '▾' : '▸') + '</span>';
+      html += '</div>';
+      html += '</div>';
+
+      if (isExp) {
+        html += '<table class="cp-task-table" style="margin-top:14px;">';
+        html += '<thead><tr><th style="width:42%;">Task</th><th style="width:11%;">Lead</th><th style="width:11%;">Owner</th><th style="width:24%;">Workstream</th><th style="width:6%;">Action</th></tr></thead><tbody>';
+        tasks.forEach(function(t, i) {
+          var s = 'width:100%;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;';
+          html += '<tr>';
+          html += '<td><input type="text" value="' + escapeHtml(t.task) + '" oninput="cpEditField(\'' + key + '\',' + i + ',\'task\',this.value)" style="' + s + '"></td>';
+          html += '<td><input type="text" value="' + escapeHtml(t.lead) + '" oninput="cpEditField(\'' + key + '\',' + i + ',\'lead\',this.value)" style="' + s + '"></td>';
+          html += '<td><select onchange="cpEditField(\'' + key + '\',' + i + ',\'owner\',this.value)" style="' + s + '">';
+          ['product','content','email','paid','site','social'].forEach(function(o) {
+            html += '<option value="' + o + '"' + (t.owner === o ? ' selected' : '') + '>' + o + '</option>';
+          });
+          html += '</select></td>';
+          html += '<td><input type="text" value="' + escapeHtml(t.ws) + '" oninput="cpEditField(\'' + key + '\',' + i + ',\'ws\',this.value)" style="' + s + '"></td>';
+          html += '<td><button onclick="cpDeleteTask(\'' + key + '\',' + i + ')" class="admin-btn danger" style="font-size:11px;padding:3px 8px;">✕</button></td>';
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+        html += '<div style="margin-top:10px;display:flex;gap:8px;">';
+        html += '<button onclick="cpAddTask(\'' + key + '\')" class="admin-btn">+ Add Task</button>';
+        html += '<button onclick="cpSaveTemplate(\'' + key + '\')" class="admin-btn primary">💾 Save</button>';
+        html += '</div>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    // Inline per-event editor card (used by Templates tab)
+    function renderEventOverrideCard(ev) {
+      var evId = cpGetEventId(ev);
+      var hasOv = !!(CP_EVENT_OVERRIDES[evId] && CP_EVENT_OVERRIDES[evId].length);
+      var isExp = !!(state.tplTabEventExpanded && state.tplTabEventExpanded[evId]);
+      var tasks = hasOv ? CP_EVENT_OVERRIDES[evId] : (CP_TEMPLATES[ev.template] || []);
+
+      var html = '<div style="border:1px solid ' + (hasOv ? '#93c5fd' : '#e5e7eb') + ';border-radius:8px;padding:10px 14px;margin-bottom:8px;background:#fff;">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="tplTabToggleEvent(\'' + evId + '\',' + JSON.stringify({name: ev.name, template: ev.template}).replace(/"/g, "&quot;") + ')">';
+      html += '<div>';
+      html += '<span style="margin-right:6px;">' + ev.icon + '</span>';
+      html += '<strong style="font-size:13px;">' + escapeHtml(ev.name) + '</strong>';
+      html += '<span style="color:#6B7280;font-size:11px;margin-left:8px;">' + ev.start.slice(5) + ' → ' + ev.end.slice(5) + '</span>';
+      html += '<span style="color:#6B7280;font-size:11px;margin-left:8px;">based on <code>' + escapeHtml(ev.template) + '</code></span>';
+      if (hasOv) html += ' <span style="font-size:10px;font-weight:700;background:#dbeafe;color:#1d4ed8;padding:2px 6px;border-radius:4px;margin-left:6px;">Customised</span>';
+      html += '</div>';
+      html += '<div style="display:flex;gap:8px;align-items:center;">';
+      if (hasOv) html += '<button onclick="event.stopPropagation();cpEventResetToDefault(\'' + evId + '\',\'' + escapeHtml(ev.name).replace(/'/g, "\\'") + '\')" class="admin-btn danger" style="font-size:11px;">Revert</button>';
+      html += '<span style="font-size:14px;color:#666;width:14px;text-align:center;">' + (isExp ? '▾' : '▸') + '</span>';
+      html += '</div>';
+      html += '</div>';
+
+      if (isExp) {
+        html += '<table class="cp-task-table" style="margin-top:12px;">';
+        html += '<thead><tr><th style="width:42%;">Task</th><th style="width:11%;">Lead</th><th style="width:11%;">Owner</th><th style="width:24%;">Workstream</th><th style="width:6%;">Action</th></tr></thead><tbody>';
+        tasks.forEach(function(t, i) {
+          var s = 'width:100%;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;';
+          html += '<tr>';
+          html += '<td><input type="text" value="' + escapeHtml(t.task) + '" oninput="cpEventEditField(\'' + evId + '\',' + i + ',\'task\',this.value)" style="' + s + '"></td>';
+          html += '<td><input type="text" value="' + escapeHtml(t.lead) + '" oninput="cpEventEditField(\'' + evId + '\',' + i + ',\'lead\',this.value)" style="' + s + '"></td>';
+          html += '<td><select onchange="cpEventEditField(\'' + evId + '\',' + i + ',\'owner\',this.value)" style="' + s + '">';
+          ['product','content','email','paid','site','social'].forEach(function(o) {
+            html += '<option value="' + o + '"' + (t.owner === o ? ' selected' : '') + '>' + o + '</option>';
+          });
+          html += '</select></td>';
+          html += '<td><input type="text" value="' + escapeHtml(t.ws) + '" oninput="cpEventEditField(\'' + evId + '\',' + i + ',\'ws\',this.value)" style="' + s + '"></td>';
+          html += '<td><button onclick="cpEventDeleteTask(\'' + evId + '\',' + i + ')" class="admin-btn danger" style="font-size:11px;padding:3px 8px;">✕</button></td>';
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+        html += '<div style="margin-top:10px;display:flex;gap:8px;">';
+        html += '<button onclick="cpEventAddTask(\'' + evId + '\')" class="admin-btn">+ Add Task</button>';
+        html += '<button onclick=\'cpEventSaveOverride("' + evId + '", "' + escapeHtml(ev.name).replace(/'/g, "&apos;").replace(/"/g, "\\\"") + '")\' class="admin-btn primary">💾 Save Customisation</button>';
+        html += '</div>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    function tplTabToggle(key) {
+      if (!state.tplTabExpanded) state.tplTabExpanded = {};
+      state.tplTabExpanded[key] = !state.tplTabExpanded[key];
+      render();
+    }
+    function tplTabToggleEvent(evId, evRef) {
+      if (!state.tplTabEventExpanded) state.tplTabEventExpanded = {};
+      var willOpen = !state.tplTabEventExpanded[evId];
+      state.tplTabEventExpanded[evId] = willOpen;
+      // When opening for the first time and no override exists yet, seed it from the shared template
+      if (willOpen && evRef && evRef.template && (!CP_EVENT_OVERRIDES[evId] || !CP_EVENT_OVERRIDES[evId].length)) {
+        CP_EVENT_OVERRIDES[evId] = cpDeepCopyTasks(CP_TEMPLATES[evRef.template] || []);
+      }
+      render();
+    }
+
+    function renderTemplatesTab() {
+      if (_userRole !== 'admin') {
+        return '<div style="padding:60px 20px;text-align:center;color:#6B7280;font-size:14px;">Templates editing is admin-only. Sign in as an admin to access this tab.</div>';
+      }
+
+      var fy = FY_DEFS[state.selectedFY];
+      var allEvents = buildCPEventsForFY(state.selectedFY);
+
+      // Count events per template
+      var tmplEventCount = {};
+      allEvents.forEach(function(ev) {
+        tmplEventCount[ev.template] = (tmplEventCount[ev.template] || 0) + 1;
+      });
+
+      // Filter state for events section
+      if (!state.tplTabFilter) state.tplTabFilter = 'all';
+
+      var html = '<div style="max-width:1200px;margin:0 auto;padding:24px;">';
+
+      // ─── Section 1: Shared Templates ───
+      html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">';
+      html += '<h2 style="font-size:18px;color:#1B365D;margin:0;">📋 Shared Templates</h2>';
+      html += '<span style="font-size:12px;color:#6B7280;">' + Object.keys(CP_TEMPLATES).length + ' templates · edits propagate to every event using each template</span>';
+      html += '</div>';
+      html += '<p style="font-size:13px;color:#6B7280;margin-bottom:14px;">These are the master playbooks. Edit a template here to update the task list for every event that uses it (unless that event has been customised below).</p>';
+
+      Object.keys(CP_TEMPLATES).sort().forEach(function(key) {
+        html += renderSharedTemplateCard(key, tmplEventCount[key] || 0);
+      });
+
+      html += '<div style="display:flex;gap:8px;margin-top:8px;margin-bottom:32px;align-items:center;">';
+      html += '<input type="text" id="tpl-tab-new-key" placeholder="New template key (e.g. easter_promo)" style="flex:1;max-width:380px;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">';
+      html += '<button onclick="addNewTemplateFromTab()" class="admin-btn primary">+ Create Template</button>';
+      html += '</div>';
+
+      // ─── Section 2: Per-Event Customisations ───
+      html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;border-top:1px solid #e5e7eb;padding-top:24px;">';
+      html += '<h2 style="font-size:18px;color:#1B365D;margin:0;">🎯 Per-Event Customisations</h2>';
+      html += '<span style="font-size:12px;color:#6B7280;">' + (fy ? fy.label : state.selectedFY) + ' · ' + allEvents.length + ' events</span>';
+      html += '</div>';
+      html += '<p style="font-size:13px;color:#6B7280;margin-bottom:14px;">Click any event to customise its task list independently. Customised events stay overridden even if the shared template changes — until you click Revert.</p>';
+
+      // Filter chips
+      var counts = { all: allEvents.length, key_event: 0, seasonal: 0, drop: 0 };
+      allEvents.forEach(function(ev) { counts[ev.category]++; });
+      var filters = [
+        {val:'all', label: 'All (' + counts.all + ')'},
+        {val:'key_event', label: 'Key Events (' + counts.key_event + ')'},
+        {val:'seasonal', label: 'Seasonal (' + counts.seasonal + ')'},
+        {val:'drop', label: 'Drops (' + counts.drop + ')'},
+        {val:'customised', label: '✨ Customised only'}
+      ];
+      html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">';
+      filters.forEach(function(f) {
+        var active = state.tplTabFilter === f.val;
+        html += '<button onclick="state.tplTabFilter=\'' + f.val + '\'; render();" style="padding:6px 12px;border-radius:6px;border:1px solid ' + (active ? '#1B365D' : '#ddd') + ';background:' + (active ? '#1B365D' : '#fff') + ';color:' + (active ? '#fff' : '#1B365D') + ';font-size:12px;cursor:pointer;font-weight:' + (active ? '700' : '500') + ';">' + f.label + '</button>';
+      });
+      html += '</div>';
+
+      var filtered = allEvents;
+      if (state.tplTabFilter === 'customised') {
+        filtered = allEvents.filter(function(ev) {
+          var evId = cpGetEventId(ev);
+          return CP_EVENT_OVERRIDES[evId] && CP_EVENT_OVERRIDES[evId].length;
+        });
+      } else if (state.tplTabFilter !== 'all') {
+        filtered = allEvents.filter(function(ev) { return ev.category === state.tplTabFilter; });
+      }
+
+      if (filtered.length === 0) {
+        html += '<p style="color:#6B7280;font-size:13px;padding:20px;text-align:center;background:#f9fafb;border-radius:8px;">No events match this filter.</p>';
+      } else {
+        filtered.forEach(function(ev) { html += renderEventOverrideCard(ev); });
+      }
+
+      html += '</div>';
+      return html;
+    }
+
+    function addNewTemplateFromTab() {
+      if (_userRole !== 'admin') return;
+      var input = document.getElementById('tpl-tab-new-key');
+      var raw = ((input && input.value) || '').trim();
+      if (!raw) { alert('Enter a template key first.'); return; }
+      var key = raw.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+      if (!key) { alert('Template key must contain letters or numbers.'); return; }
+      if (CP_TEMPLATES[key]) { alert('Template "' + key + '" already exists.'); return; }
+      CP_TEMPLATES[key] = [];
+      if (input) input.value = '';
+      state.tplTabExpanded = state.tplTabExpanded || {};
+      state.tplTabExpanded[key] = true;
+      firebase.database().ref(BRAND_KEY + '/cp_templates/' + key).set({})
+        .then(function() { render(); })
+        .catch(function(e) { alert('Save failed: ' + (e && e.message ? e.message : e)); });
+    }
+
     function renderCriticalPath() {
       var fy = FY_DEFS[state.selectedFY];
       var fyStart = new Date(fy.startYear, fy.startMonth - 1, 1);
@@ -5175,6 +5432,8 @@
         content = renderCriticalPath();
       } else if (state.currentTab === 'simulator') {
         content = renderPromoSimulator();
+      } else if (state.currentTab === 'templates') {
+        content = renderTemplatesTab();
       } else if (state.currentTab === 'insights') {
         content = renderInsights();
       }
