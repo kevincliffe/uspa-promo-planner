@@ -2411,6 +2411,10 @@
         loadMonthlyMetaFromFirebase(); loadMonthlyGoogleFromFirebase(); loadMonthlyInsightsFromFirebase();
         loadWeeklyInsightsFromFirebase(); loadMarginsFromFirebase(); loadCriticalPathTemplatesFromFirebase();
         loadCriticalPathEventOverridesFromFirebase(); loadCriticalPathDeletedEventsFromFirebase();
+        loadCriticalPathVerificationsFromFirebase();
+        // Publish events calendar so the agent can run verify_upcoming_events.
+        // Slight delay so other loads complete first.
+        setTimeout(publishCriticalPathEventsCalendar, 1500);
       } catch(e) {
         console.error('Firebase init failed:', e);
         _syncStatus = 'offline';
@@ -2541,6 +2545,52 @@
             render();
           });
         } catch(e) { console.warn('Weekly insights load failed:', e); }
+      }
+
+      // Publish the dashboard's event universe to Firebase so the agent can
+      // read it during verify_upcoming_events. Runs all FYs to keep the
+      // calendar complete. Idempotent — safe to re-run.
+      function publishCriticalPathEventsCalendar() {
+        if (!firebase.auth().currentUser) return;
+        try {
+          var calendar = {};
+          Object.keys(FY_DEFS).forEach(function(fyKey) {
+            // Build for this FY without delete/override filtering — we want the canonical event list
+            var savedDeleted = CP_DELETED_EVENTS;
+            CP_DELETED_EVENTS = {};
+            buildCPEventsForFY(fyKey).forEach(function(ev) {
+              var evId = cpGetEventId(ev);
+              calendar[evId] = {
+                name: ev.name,
+                icon: ev.icon || '',
+                start: ev.start,
+                end: ev.end,
+                template: ev.template,
+                category: ev.category,
+                fy: fyKey
+              };
+            });
+            CP_DELETED_EVENTS = savedDeleted;
+          });
+          firebase.database().ref(BRAND_KEY + '/cp_events_calendar').set(calendar)
+            .then(function() {
+              console.log('Published ' + Object.keys(calendar).length + ' events to ' + BRAND_KEY + '/cp_events_calendar');
+            })
+            .catch(function(e) { console.warn('Events calendar publish failed:', e); });
+        } catch(e) { console.warn('publishCriticalPathEventsCalendar threw:', e); }
+      }
+
+      // System verification results — agent writes after running verify_event_tasks
+      function loadCriticalPathVerificationsFromFirebase() {
+        if (!firebase.auth().currentUser) return;
+        try {
+          firebase.database().ref(BRAND_KEY + '/cp_verifications').once('value', function(snap) {
+            var data = snap.val();
+            CP_VERIFICATIONS = data && typeof data === 'object' ? data : {};
+            console.log('CP verifications loaded from Firebase:', Object.keys(CP_VERIFICATIONS).length, 'events');
+            render();
+          });
+        } catch(e) { console.warn('CP verifications load failed:', e); }
       }
 
       // Soft-deleted event markers — admin can hide events.
@@ -3963,6 +4013,33 @@
     // as {evId: true} at {BRAND_KEY}/cp_deleted_events. Restorable.
     let CP_DELETED_EVENTS = {};
 
+    // System verification — agent writes results here after checking
+    // Klaviyo / Shopify / Meta / Google for evidence that tasks were done.
+    // Shape: { evId: { results: { taskIdx: {verified, evidence, source} }, last_verified: ISO } }
+    let CP_VERIFICATIONS = {};
+
+    // Verifier options for tasks. "manual" = honour-system checkbox.
+    // The others tell the agent which API to query for evidence.
+    var VERIFIER_OPTIONS = [
+      { val: 'manual',             label: 'Manual (checkbox only)' },
+      { val: 'klaviyo:campaign',   label: 'Klaviyo · campaign sent in event window' },
+      { val: 'klaviyo:segment',    label: 'Klaviyo · segment exists' },
+      { val: 'klaviyo:flow',       label: 'Klaviyo · flow is live' },
+      { val: 'shopify:discount',   label: 'Shopify · active discount code' },
+      { val: 'shopify:collection', label: 'Shopify · collection published' },
+      { val: 'meta:campaign',      label: 'Meta · campaign live in window' },
+      { val: 'google:campaign',    label: 'Google Ads · campaign live in window' }
+    ];
+    function verifierLabel(v) {
+      var found = VERIFIER_OPTIONS.find(function(o){ return o.val === v; });
+      return found ? found.label : (v || 'Manual');
+    }
+    function verifierShortLabel(v) {
+      if (!v || v === 'manual') return '';
+      var parts = v.split(':');
+      return parts[0] + '·' + parts[1];
+    }
+
     // Critical path templates — hardcoded fallback. Admins can edit via the
     // Critical Path view; saves go to {BRAND_KEY}/cp_templates in Firebase.
     let CP_TEMPLATES = {
@@ -4423,7 +4500,7 @@
 
       if (isExp) {
         html += '<table class="cp-task-table" style="margin-top:14px;">';
-        html += '<thead><tr><th style="width:42%;">Task</th><th style="width:11%;">Lead</th><th style="width:11%;">Owner</th><th style="width:24%;">Workstream</th><th style="width:6%;">Action</th></tr></thead><tbody>';
+        html += '<thead><tr><th style="width:30%;">Task</th><th style="width:9%;">Lead</th><th style="width:10%;">Owner</th><th style="width:18%;">Workstream</th><th style="width:27%;">Verified by</th><th style="width:6%;">Action</th></tr></thead><tbody>';
         tasks.forEach(function(t, i) {
           var s = 'width:100%;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;';
           html += '<tr>';
@@ -4435,6 +4512,12 @@
           });
           html += '</select></td>';
           html += '<td><input type="text" value="' + escapeHtml(t.ws) + '" oninput="cpEditField(\'' + key + '\',' + i + ',\'ws\',this.value)" style="' + s + '"></td>';
+          html += '<td><select onchange="cpEditField(\'' + key + '\',' + i + ',\'verifier\',this.value)" style="' + s + '">';
+          var curVerifier = t.verifier || 'manual';
+          VERIFIER_OPTIONS.forEach(function(o) {
+            html += '<option value="' + o.val + '"' + (curVerifier === o.val ? ' selected' : '') + '>' + o.label + '</option>';
+          });
+          html += '</select></td>';
           html += '<td><button onclick="cpDeleteTask(\'' + key + '\',' + i + ')" class="admin-btn danger" style="font-size:11px;padding:3px 8px;">✕</button></td>';
           html += '</tr>';
         });
@@ -4479,7 +4562,7 @@
 
       if (isExp) {
         html += '<table class="cp-task-table" style="margin-top:12px;">';
-        html += '<thead><tr><th style="width:42%;">Task</th><th style="width:11%;">Lead</th><th style="width:11%;">Owner</th><th style="width:24%;">Workstream</th><th style="width:6%;">Action</th></tr></thead><tbody>';
+        html += '<thead><tr><th style="width:30%;">Task</th><th style="width:9%;">Lead</th><th style="width:10%;">Owner</th><th style="width:18%;">Workstream</th><th style="width:27%;">Verified by</th><th style="width:6%;">Action</th></tr></thead><tbody>';
         tasks.forEach(function(t, i) {
           var s = 'width:100%;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;';
           html += '<tr>';
@@ -4491,6 +4574,12 @@
           });
           html += '</select></td>';
           html += '<td><input type="text" value="' + escapeHtml(t.ws) + '" oninput="cpEventEditField(\'' + evId + '\',' + i + ',\'ws\',this.value)" style="' + s + '"></td>';
+          html += '<td><select onchange="cpEventEditField(\'' + evId + '\',' + i + ',\'verifier\',this.value)" style="' + s + '">';
+          var curVerifier = t.verifier || 'manual';
+          VERIFIER_OPTIONS.forEach(function(o) {
+            html += '<option value="' + o.val + '"' + (curVerifier === o.val ? ' selected' : '') + '>' + o.label + '</option>';
+          });
+          html += '</select></td>';
           html += '<td><button onclick="cpEventDeleteTask(\'' + evId + '\',' + i + ')" class="admin-btn danger" style="font-size:11px;padding:3px 8px;">✕</button></td>';
           html += '</tr>';
         });
@@ -4941,10 +5030,24 @@
               var dateCls = isDone ? 'cp-date-past' : isToday ? 'cp-date-today' : isPast ? 'cp-date-past' : isSoon ? 'cp-date-soon' : 'cp-date-future';
               var tStatus = getTaskStatus(taskDate, isDone, t.lead, ev.end);
 
+              // Verification status (system-checked tasks)
+              var verif = (CP_VERIFICATIONS[evId] && CP_VERIFICATIONS[evId].results && CP_VERIFICATIONS[evId].results[gIdx]) || null;
+              var verifierKind = t.verifier || 'manual';
+              var verifBadge = '';
+              if (verifierKind !== 'manual') {
+                if (verif && verif.verified) {
+                  verifBadge = '<span title="' + escapeHtml(verif.evidence || 'Verified by ' + verifierKind) + '" style="display:inline-block;margin-left:6px;font-size:10px;font-weight:700;background:#dcfce7;color:#166534;padding:1px 5px;border-radius:3px;">✓ ' + verifierShortLabel(verifierKind) + '</span>';
+                } else if (verif && verif.verified === false) {
+                  verifBadge = '<span title="System checked: nothing matching found yet" style="display:inline-block;margin-left:6px;font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:3px;">⚠️ ' + verifierShortLabel(verifierKind) + '</span>';
+                } else {
+                  verifBadge = '<span title="Verifier set but never checked — run refresh_insights.command" style="display:inline-block;margin-left:6px;font-size:10px;font-weight:700;background:#f3f4f6;color:#6B7280;padding:1px 5px;border-radius:3px;">⏳ ' + verifierShortLabel(verifierKind) + '</span>';
+                }
+              }
+
               html += '<tr class="' + (isDone ? 'cp-task-done' : '') + '">';
               // Checkbox
               html += '<td style="text-align:center;"><span class="cp-check ' + (isDone ? 'cp-check-done' : '') + '" onclick="event.stopPropagation(); toggleCPDone(\'' + taskKey + '\');">' + (isDone ? '✓' : '') + '</span></td>';
-              html += '<td class="cp-task-name">' + t.task + '</td>';
+              html += '<td class="cp-task-name">' + t.task + verifBadge + '</td>';
               html += '<td class="cp-date ' + dateCls + '">' + dateStr + '</td>';
               html += '<td><span class="cp-status ' + tStatus.cls + '">' + tStatus.label + '</span></td>';
               html += '<td class="cp-lead">' + t.lead + '</td>';
