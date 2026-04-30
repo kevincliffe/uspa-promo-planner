@@ -4171,6 +4171,32 @@
       return map[owner] || 'cp-owner-product';
     }
 
+    // Non-blocking toast notification — used in place of alert() for save/delete
+    // confirmations so the page doesn't freeze and Chrome MCP can keep driving.
+    function showToast(message, kind) {
+      try {
+        var bg = '#1B365D', fg = '#fff';
+        if (kind === 'success') { bg = '#059669'; }
+        else if (kind === 'error') { bg = '#DC2626'; }
+        else if (kind === 'warn')  { bg = '#D97706'; }
+        var t = document.createElement('div');
+        t.textContent = message;
+        t.style.cssText = (
+          'position:fixed;top:20px;right:20px;z-index:99999;'
+          + 'background:' + bg + ';color:' + fg + ';'
+          + 'padding:10px 16px;border-radius:8px;font-size:13px;font-weight:600;'
+          + 'box-shadow:0 4px 12px rgba(0,0,0,0.15);'
+          + 'opacity:0;transition:opacity 200ms;'
+        );
+        document.body.appendChild(t);
+        setTimeout(function(){ t.style.opacity = '1'; }, 10);
+        setTimeout(function(){
+          t.style.opacity = '0';
+          setTimeout(function(){ if (t.parentNode) t.parentNode.removeChild(t); }, 250);
+        }, 3000);
+      } catch(e) { console.warn('Toast failed:', e); }
+    }
+
     // Tiny HTML escape — used for safe inline rendering of user-edited template fields
     function escapeHtml(s) {
       if (s == null) return '';
@@ -4242,7 +4268,7 @@
       var t = CP_EVENT_OVERRIDES[evId] || [];
       firebase.database().ref(BRAND_KEY + '/cp_event_overrides/' + evId).set(t)
         .then(function() {
-          alert('Saved override for "' + evName + '". Other events using the same template are unaffected.');
+          showToast('✅ Saved customisation for ' + evName, 'success');
           state.cpEventEditing = null;
           render();
         })
@@ -4323,7 +4349,7 @@
       var t = CP_TEMPLATES[templateKey];
       firebase.database().ref(BRAND_KEY + '/cp_templates/' + templateKey).set(t)
         .then(function() {
-          alert('Saved "' + templateKey + '" template.');
+          showToast('✅ Saved ' + templateKey + ' template', 'success');
           state.cpAdminEditing = null;
           render();
           _refreshAdminTemplatesIfOpen();
