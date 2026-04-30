@@ -2410,7 +2410,7 @@
         loadShopifyDataFromFirebase(); loadWeeklyShopifyFromFirebase(); loadMetaSpendFromFirebase(); loadGoogleSpendFromFirebase();
         loadMonthlyMetaFromFirebase(); loadMonthlyGoogleFromFirebase(); loadMonthlyInsightsFromFirebase();
         loadWeeklyInsightsFromFirebase(); loadMarginsFromFirebase(); loadCriticalPathTemplatesFromFirebase();
-        loadCriticalPathEventOverridesFromFirebase();
+        loadCriticalPathEventOverridesFromFirebase(); loadCriticalPathDeletedEventsFromFirebase();
       } catch(e) {
         console.error('Firebase init failed:', e);
         _syncStatus = 'offline';
@@ -2541,6 +2541,19 @@
             render();
           });
         } catch(e) { console.warn('Weekly insights load failed:', e); }
+      }
+
+      // Soft-deleted event markers — admin can hide events.
+      function loadCriticalPathDeletedEventsFromFirebase() {
+        if (!firebase.auth().currentUser) return;
+        try {
+          firebase.database().ref(BRAND_KEY + '/cp_deleted_events').once('value', function(snap) {
+            var data = snap.val();
+            CP_DELETED_EVENTS = data && typeof data === 'object' ? data : {};
+            console.log('CP deleted events loaded from Firebase:', Object.keys(CP_DELETED_EVENTS).length);
+            render();
+          });
+        } catch(e) { console.warn('CP deleted events load failed:', e); }
       }
 
       // Per-event task overrides — admin can customise individual events
@@ -3946,6 +3959,10 @@
     // Loaded from {BRAND_KEY}/cp_event_overrides in Firebase.
     let CP_EVENT_OVERRIDES = {};
 
+    // Soft-deleted events — admins can hide events they don't run. Stored
+    // as {evId: true} at {BRAND_KEY}/cp_deleted_events. Restorable.
+    let CP_DELETED_EVENTS = {};
+
     // Critical path templates — hardcoded fallback. Admins can edit via the
     // Critical Path view; saves go to {BRAND_KEY}/cp_templates in Firebase.
     let CP_TEMPLATES = {
@@ -4163,6 +4180,23 @@
       render();
     }
 
+    // ─── Admin: hide / restore events from the Critical Path universe ───
+    function cpDeleteEvent(evId, evName) {
+      if (_userRole !== 'admin') { alert('Admins only.'); return; }
+      if (!confirm('Hide "' + evName + '" from the Critical Path? You can restore it later from the "Show hidden" list.')) return;
+      CP_DELETED_EVENTS[evId] = true;
+      firebase.database().ref(BRAND_KEY + '/cp_deleted_events/' + evId).set(true)
+        .then(function() { render(); })
+        .catch(function(e) { alert('Delete failed: ' + (e && e.message ? e.message : e)); });
+    }
+    function cpRestoreEvent(evId) {
+      if (_userRole !== 'admin') return;
+      delete CP_DELETED_EVENTS[evId];
+      firebase.database().ref(BRAND_KEY + '/cp_deleted_events/' + evId).remove()
+        .then(function() { render(); })
+        .catch(function(e) { alert('Restore failed: ' + (e && e.message ? e.message : e)); });
+    }
+
     // ─── Admin: critical-path template editing ───
     function cpStartEditing(templateKey) {
       if (_userRole !== 'admin') { alert('Admins only.'); return; }
@@ -4356,6 +4390,8 @@
       }
 
       out.sort(function(a,b) { return a.start < b.start ? -1 : a.start > b.start ? 1 : 0; });
+      // Filter out admin-hidden events
+      out = out.filter(function(ev) { return !CP_DELETED_EVENTS[cpGetEventId(ev)]; });
       return out;
     }
 
@@ -4421,6 +4457,7 @@
       html += '</div>';
       html += '<div style="display:flex;gap:8px;align-items:center;">';
       if (hasOv) html += '<button onclick="event.stopPropagation();cpEventResetToDefault(\'' + evId + '\',\'' + escapeHtml(ev.name).replace(/'/g, "\\'") + '\')" class="admin-btn danger" style="font-size:11px;">Revert</button>';
+      html += '<button onclick="event.stopPropagation();cpDeleteEvent(\'' + evId + '\',\'' + escapeHtml(ev.name).replace(/'/g, "\\'") + '\')" class="admin-btn danger" style="font-size:11px;">Delete</button>';
       html += '<span style="font-size:14px;color:#666;width:14px;text-align:center;">' + (isExp ? '▾' : '▸') + '</span>';
       html += '</div>';
       html += '</div>';
@@ -4541,6 +4578,46 @@
         html += '<p style="color:#6B7280;font-size:13px;padding:20px;text-align:center;background:#f9fafb;border-radius:8px;">No events match this filter.</p>';
       } else {
         filtered.forEach(function(ev) { html += renderEventOverrideCard(ev); });
+      }
+
+      // ─── Hidden events (collapsible at bottom) ───
+      var deletedIds = Object.keys(CP_DELETED_EVENTS);
+      if (deletedIds.length > 0) {
+        var hiddenExpanded = !!state.tplTabHiddenExpanded;
+        html += '<div style="margin-top:24px;border-top:1px solid #e5e7eb;padding-top:16px;">';
+        html += '<div style="cursor:pointer;display:flex;align-items:center;gap:8px;color:#6B7280;font-size:13px;" onclick="state.tplTabHiddenExpanded=' + (!hiddenExpanded) + ';render();">';
+        html += '<span>' + (hiddenExpanded ? '▾' : '▸') + '</span>';
+        html += '<span><strong>' + deletedIds.length + '</strong> hidden event' + (deletedIds.length === 1 ? '' : 's') + ' — click to ' + (hiddenExpanded ? 'collapse' : 'manage') + '</span>';
+        html += '</div>';
+
+        if (hiddenExpanded) {
+          // Build a master list of every possible event (across all FYs) to look up names of deleted ones
+          var allFYEvents = {};
+          Object.keys(FY_DEFS).forEach(function(fyKey) {
+            // Build for this FY without the delete filter so we can find hidden ones
+            var savedDeleted = CP_DELETED_EVENTS;
+            CP_DELETED_EVENTS = {}; // temp — find all events
+            buildCPEventsForFY(fyKey).forEach(function(ev) {
+              allFYEvents[cpGetEventId(ev)] = ev;
+            });
+            CP_DELETED_EVENTS = savedDeleted;
+          });
+
+          html += '<div style="margin-top:10px;">';
+          deletedIds.forEach(function(evId) {
+            var ev = allFYEvents[evId];
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:6px;background:#f9fafb;">';
+            if (ev) {
+              html += '<span style="font-size:12px;">' + ev.icon + ' ' + escapeHtml(ev.name) + ' <span style="color:#6B7280;">(' + ev.start.slice(0,7) + ')</span></span>';
+            } else {
+              html += '<span style="font-size:12px;color:#6B7280;font-family:monospace;">' + escapeHtml(evId) + '</span>';
+            }
+            html += '<button onclick="cpRestoreEvent(\'' + evId + '\')" class="admin-btn">Restore</button>';
+            html += '</div>';
+          });
+          html += '</div>';
+        }
+        html += '</div>';
       }
 
       html += '</div>';
