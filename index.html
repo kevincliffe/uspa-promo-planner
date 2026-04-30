@@ -2414,6 +2414,7 @@
         loadShopifyDataFromFirebase(); loadWeeklyShopifyFromFirebase(); loadMetaSpendFromFirebase(); loadGoogleSpendFromFirebase();
         loadMonthlyMetaFromFirebase(); loadMonthlyGoogleFromFirebase(); loadMonthlyInsightsFromFirebase();
         loadWeeklyInsightsFromFirebase(); loadMarginsFromFirebase(); loadCriticalPathTemplatesFromFirebase();
+        loadCriticalPathEventOverridesFromFirebase();
       } catch(e) {
         console.error('Firebase init failed:', e);
         _syncStatus = 'offline';
@@ -2544,6 +2545,29 @@
             render();
           });
         } catch(e) { console.warn('Weekly insights load failed:', e); }
+      }
+
+      // Per-event task overrides — admin can customise individual events
+      // without affecting the shared template. Reads {BRAND_KEY}/cp_event_overrides.
+      function loadCriticalPathEventOverridesFromFirebase() {
+        if (!firebase.auth().currentUser) return;
+        try {
+          firebase.database().ref(BRAND_KEY + '/cp_event_overrides').once('value', function(snap) {
+            var data = snap.val();
+            if (!data) { CP_EVENT_OVERRIDES = {}; return; }
+            var out = {};
+            Object.keys(data).forEach(function(evId) {
+              var t = data[evId];
+              if (Array.isArray(t)) out[evId] = t;
+              else if (t && typeof t === 'object') {
+                out[evId] = Object.keys(t).sort(function(a,b){return parseInt(a)-parseInt(b);}).map(function(k){return t[k];});
+              }
+            });
+            CP_EVENT_OVERRIDES = out;
+            console.log('CP event overrides loaded from Firebase:', Object.keys(out).length);
+            render();
+          });
+        } catch(e) { console.warn('CP event overrides load failed:', e); }
       }
 
       // Critical path templates — admin-editable. Reads {BRAND_KEY}/cp_templates
@@ -3920,6 +3944,12 @@
     // ============================================================================
 
     // Critical path templates by event category
+    // Per-event task overrides — when an admin customises tasks for a SPECIFIC
+    // event (e.g. just "Black Friday 2025" rather than the bfcm template),
+    // the customised list is stored here keyed by event ID.
+    // Loaded from {BRAND_KEY}/cp_event_overrides in Firebase.
+    let CP_EVENT_OVERRIDES = {};
+
     // Critical path templates — hardcoded fallback. Admins can edit via the
     // Critical Path view; saves go to {BRAND_KEY}/cp_templates in Firebase.
     let CP_TEMPLATES = {
@@ -4057,6 +4087,84 @@
       return String(s)
         .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
         .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+
+    // Resolve effective task list for an event — override wins, falls back to template
+    function cpGetEventId(ev) {
+      return ev.name.replace(/[^a-zA-Z0-9]/g, '_');
+    }
+    function cpGetEventTasks(ev) {
+      var evId = cpGetEventId(ev);
+      var override = CP_EVENT_OVERRIDES[evId];
+      if (override && override.length) return override;
+      return CP_TEMPLATES[ev.template] || [];
+    }
+    function cpDeepCopyTasks(arr) {
+      if (!Array.isArray(arr)) return [];
+      return arr.map(function(t) { return {task: t.task, lead: t.lead, owner: t.owner, ws: t.ws}; });
+    }
+
+    // ─── Admin: per-event override editing ───
+    // (Edits CP_EVENT_OVERRIDES[evId] — saves don't touch the shared template.)
+    function cpStartEventEdit(ev) {
+      if (_userRole !== 'admin') { alert('Admins only.'); return; }
+      var evId = cpGetEventId(ev);
+      // Seed override from current effective tasks if no override exists yet
+      if (!CP_EVENT_OVERRIDES[evId] || !CP_EVENT_OVERRIDES[evId].length) {
+        CP_EVENT_OVERRIDES[evId] = cpDeepCopyTasks(CP_TEMPLATES[ev.template] || []);
+      }
+      state.cpEventEditing = { evId: evId, evName: ev.name, basedOn: ev.template };
+      state.cpAdminEditing = null;
+      render();
+    }
+    function cpEventEditField(evId, idx, field, value) {
+      if (_userRole !== 'admin') return;
+      var t = CP_EVENT_OVERRIDES[evId];
+      if (!t || !t[idx]) return;
+      t[idx][field] = value;
+    }
+    function cpEventAddTask(evId) {
+      if (_userRole !== 'admin') return;
+      if (!CP_EVENT_OVERRIDES[evId]) CP_EVENT_OVERRIDES[evId] = [];
+      CP_EVENT_OVERRIDES[evId].push({task: 'New task', lead: '1 wk', owner: 'product', ws: 'Product'});
+      render();
+    }
+    function cpEventDeleteTask(evId, idx) {
+      if (_userRole !== 'admin') return;
+      var t = CP_EVENT_OVERRIDES[evId];
+      if (!t) return;
+      if (!confirm('Delete this task from this event’s override?')) return;
+      t.splice(idx, 1);
+      render();
+    }
+    function cpEventSaveOverride(evId, evName) {
+      if (_userRole !== 'admin') { alert('Admins only.'); return; }
+      if (!firebase.auth().currentUser) { alert('Not signed in.'); return; }
+      var t = CP_EVENT_OVERRIDES[evId] || [];
+      firebase.database().ref(BRAND_KEY + '/cp_event_overrides/' + evId).set(t)
+        .then(function() {
+          alert('Saved override for "' + evName + '". Other events using the same template are unaffected.');
+          state.cpEventEditing = null;
+          render();
+        })
+        .catch(function(e) { alert('Save failed: ' + (e && e.message ? e.message : e)); });
+    }
+    function cpEventResetToDefault(evId, evName) {
+      if (_userRole !== 'admin') return;
+      if (!confirm('Remove the customisation for "' + evName + '"? It will revert to the shared template.')) return;
+      delete CP_EVENT_OVERRIDES[evId];
+      firebase.database().ref(BRAND_KEY + '/cp_event_overrides/' + evId).remove()
+        .then(function() {
+          state.cpEventEditing = null;
+          render();
+        })
+        .catch(function(e) { alert('Reset failed: ' + (e && e.message ? e.message : e)); });
+    }
+    function cpEventCancelEdit() {
+      state.cpEventEditing = null;
+      // Re-fetch from Firebase to discard any local edits
+      loadCriticalPathEventOverridesFromFirebase();
+      render();
     }
 
     // ─── Admin: critical-path template editing ───
@@ -4349,10 +4457,11 @@
 
       // Event cards
       filtered.forEach(function(ev, idx) {
-        var evId = ev.name.replace(/[^a-zA-Z0-9]/g, '_');
+        var evId = cpGetEventId(ev);
         var isOpen = !!state.cpExpanded[evId];
         var tmplType = getCPTypeLabel(ev.template);
-        var tasks = CP_TEMPLATES[ev.template] || [];
+        var hasOverride = !!(CP_EVENT_OVERRIDES[evId] && CP_EVENT_OVERRIDES[evId].length);
+        var tasks = cpGetEventTasks(ev);
 
         html += '<div class="cp-event-card">';
         html += '<div class="cp-event-header" onclick="state.cpExpanded[\'' + evId + '\']=!state.cpExpanded[\'' + evId + '\']; render();">';
@@ -4361,6 +4470,7 @@
         html += '<span class="cp-event-name">' + ev.name + '</span>';
         html += '<span class="cp-event-dates">' + ev.start.slice(5) + ' → ' + ev.end.slice(5) + '</span>';
         if (ev.discount) html += ' <span style="font-size:11px;color:#DC2626;font-weight:600;margin-left:6px;">' + ev.discount + '</span>';
+        if (hasOverride) html += ' <span title="This event has a customised task list" style="font-size:10px;font-weight:700;background:#dbeafe;color:#1d4ed8;padding:2px 6px;border-radius:4px;margin-left:6px;">Customised</span>';
         html += '<span class="cp-event-type ' + tmplType.cls + '">' + tmplType.label + '</span>';
         html += '<span class="cp-event-status ' + evStatus.cls + '">' + evStatus.label + '</span>';
         html += '<span class="cp-chevron' + (isOpen ? ' open' : '') + '">▸</span>';
@@ -4368,6 +4478,48 @@
 
         if (isOpen) {
           html += '<div class="cp-body">';
+
+          // ─── Admin edit mode for THIS EVENT's per-event override ───
+          if (_userRole === 'admin' && state.cpEventEditing && state.cpEventEditing.evId === evId) {
+            var evTasks = CP_EVENT_OVERRIDES[evId] || [];
+            html += '<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;">';
+            html += '<strong>✏️ Customising: ' + escapeHtml(ev.name) + '</strong> — changes apply to this event only. Based on shared template <code>' + escapeHtml(ev.template) + '</code>.';
+            html += '</div>';
+            html += '<table class="cp-task-table">';
+            html += '<thead><tr>'
+              + '<th style="width:40%;">Task</th>'
+              + '<th style="width:10%;">Lead</th>'
+              + '<th style="width:12%;">Owner</th>'
+              + '<th style="width:25%;">Workstream</th>'
+              + '<th style="width:8%;">Action</th>'
+              + '</tr></thead><tbody>';
+            evTasks.forEach(function(t, i) {
+              var inputStyle = 'width:100%;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;';
+              html += '<tr>';
+              html += '<td><input type="text" value="' + escapeHtml(t.task) + '" oninput="cpEventEditField(\'' + evId + '\',' + i + ',\'task\',this.value)" style="' + inputStyle + '"></td>';
+              html += '<td><input type="text" value="' + escapeHtml(t.lead) + '" oninput="cpEventEditField(\'' + evId + '\',' + i + ',\'lead\',this.value)" style="' + inputStyle + '" placeholder="6 wks, D-Day, +3 days"></td>';
+              html += '<td><select onchange="cpEventEditField(\'' + evId + '\',' + i + ',\'owner\',this.value)" style="' + inputStyle + '">';
+              ['product','content','email','paid','site','social'].forEach(function(o) {
+                html += '<option value="' + o + '"' + (t.owner === o ? ' selected' : '') + '>' + o + '</option>';
+              });
+              html += '</select></td>';
+              html += '<td><input type="text" value="' + escapeHtml(t.ws) + '" oninput="cpEventEditField(\'' + evId + '\',' + i + ',\'ws\',this.value)" style="' + inputStyle + '"></td>';
+              html += '<td><button onclick="cpEventDeleteTask(\'' + evId + '\',' + i + ')" style="color:#DC2626;background:#fff;border:1px solid #fca5a5;border-radius:4px;padding:4px 8px;cursor:pointer;font-size:11px;">✕</button></td>';
+              html += '</tr>';
+            });
+            html += '</tbody></table>';
+            html += '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">';
+            html += '<button onclick="cpEventAddTask(\'' + evId + '\')" style="padding:6px 12px;background:#fff;border:1px solid #1B365D;color:#1B365D;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">+ Add Task</button>';
+            html += '<button onclick="cpEventSaveOverride(\'' + evId + '\',\'' + escapeHtml(ev.name).replace(/'/g, "\\'") + '\')" style="padding:6px 14px;background:#1B365D;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">💾 Save Customisation</button>';
+            if (hasOverride) {
+              html += '<button onclick="cpEventResetToDefault(\'' + evId + '\',\'' + escapeHtml(ev.name).replace(/'/g, "\\'") + '\')" style="padding:6px 12px;background:#fef2f2;border:1px solid #fca5a5;color:#DC2626;border-radius:6px;cursor:pointer;font-size:12px;">Revert to Shared Template</button>';
+            }
+            html += '<button onclick="cpEventCancelEdit()" style="padding:6px 12px;background:#fff;border:1px solid #ddd;color:#666;border-radius:6px;cursor:pointer;font-size:12px;">Cancel</button>';
+            html += '</div>';
+            html += '</div>'; // close cp-body
+            html += '</div>'; // close cp-event-card
+            return;
+          }
 
           // ─── Admin edit mode for this template ───
           if (_userRole === 'admin' && state.cpAdminEditing === ev.template) {
@@ -4471,10 +4623,14 @@
             html += '</tbody></table>';
           });
 
-          // Admin-only "Edit Template" entry point
+          // Admin-only per-event editing entry points
           if (_userRole === 'admin') {
-            html += '<div style="margin-top:12px;text-align:right;">';
-            html += '<button onclick="cpStartEditing(\'' + ev.template + '\')" style="padding:6px 12px;background:#fff;border:1px solid #1B365D;color:#1B365D;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">✏️ Edit Template</button>';
+            html += '<div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">';
+            html += '<button onclick=\'cpStartEventEdit(' + JSON.stringify({name: ev.name, template: ev.template}).replace(/'/g, "&#39;") + ')\' style="padding:6px 12px;background:#fff;border:1px solid #1B365D;color:#1B365D;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">✏️ Customise this event</button>';
+            if (hasOverride) {
+              html += '<button onclick="cpEventResetToDefault(\'' + evId + '\',\'' + escapeHtml(ev.name).replace(/'/g, "\\'") + '\')" style="padding:6px 12px;background:#fef2f2;border:1px solid #fca5a5;color:#DC2626;border-radius:6px;cursor:pointer;font-size:12px;">Revert to Shared</button>';
+            }
+            html += '<span style="font-size:11px;color:#6B7280;align-self:center;">Shared template: <code>' + escapeHtml(ev.template) + '</code> (manage in Admin → Critical Path Templates)</span>';
             html += '</div>';
           }
 
