@@ -3115,7 +3115,14 @@
     }
 
     function toggleWfCheck(key) {
+      if (!state.workflowChecks) state.workflowChecks = {};
       state.workflowChecks[key] = !state.workflowChecks[key];
+      // Path-specific save so concurrent toggles by different users don't clobber each other
+      if (state.workflowChecks[key]) {
+        savePath('workflowChecks/' + key, true);
+      } else {
+        savePath('workflowChecks/' + key, null);
+      }
     }
 
     function getEmailForWeek(weekIdx, slot) {
@@ -3124,8 +3131,10 @@
     }
 
     function setEmailForWeek(weekIdx, slot, value) {
+      if (!state.emailPlan) state.emailPlan = {};
       var key = state.selectedFY + '-' + weekIdx + '-' + slot;
       state.emailPlan[key] = value;
+      savePath('emailPlan/' + key, value);
     }
 
     function getDefaultEmail(weekIdx, slot) {
@@ -5806,7 +5815,9 @@
     }
 
     function setMonthEmail(key, value) {
+      if (!state.monthEmails) state.monthEmails = {};
       state.monthEmails[key] = value;
+      savePath('monthEmails/' + key, value);
     }
 
     // === EMAIL CONFIG FUNCTIONS ===
@@ -5835,10 +5846,12 @@
 
     function updateEmailDate(monthKey, weekIdx, emailIdx, value) {
       state.emailConfig[monthKey][weekIdx].emails[emailIdx].date = value;
+      savePath('emailConfig/' + monthKey + '/' + weekIdx + '/emails/' + emailIdx + '/date', value);
     }
 
     function updateEmailType(monthKey, weekIdx, emailIdx, value) {
       state.emailConfig[monthKey][weekIdx].emails[emailIdx].type = value;
+      savePath('emailConfig/' + monthKey + '/' + weekIdx + '/emails/' + emailIdx + '/type', value);
     }
 
     // === KEY EVENT EDIT FUNCTIONS ===
@@ -6010,14 +6023,15 @@
       if (!state.marginOverrides) state.marginOverrides = {};
       if (!state.marginOverrides[monthKey]) state.marginOverrides[monthKey] = {};
       var num = parseFloat(value);
-      state.marginOverrides[monthKey][field] = isNaN(num) ? null : num;
-      // No re-render needed — input retains value
+      var stored = isNaN(num) ? null : num;
+      state.marginOverrides[monthKey][field] = stored;
+      savePath('marginOverrides/' + monthKey + '/' + field, stored);
     }
 
     function saveMonthNote(monthKey, value) {
       if (!state.monthNotes) state.monthNotes = {};
       state.monthNotes[monthKey] = value;
-      // No re-render needed — textarea retains value
+      savePath('monthNotes/' + monthKey, value);
     }
 
     function updateSimulator(key, value) {
