@@ -2380,9 +2380,10 @@
         _firebaseRef = firebase.database().ref(BRAND_PLANNER_KEY + '/state');
         _firebaseReady = true;
 
-        // Listen for real-time changes from other users
+        // Listen for real-time changes from other users (and our own writes,
+        // which is fine — merging is idempotent and we'd rather see the
+        // canonical Firebase state than diverge from it).
         _firebaseRef.on('value', function(snapshot) {
-          if (_ignoreNextFirebaseUpdate) { _ignoreNextFirebaseUpdate = false; return; }
           var data = snapshot.val();
           if (data) {
             PERSIST_FIELDS.forEach(function(f) {
@@ -2786,7 +2787,7 @@
     })();
 
     function saveState() {
-      // Save to localStorage immediately (always works)
+      // Save to localStorage immediately (always works, single-user fallback)
       try {
         var data = {};
         PERSIST_FIELDS.forEach(function(f) {
@@ -2795,7 +2796,12 @@
         localStorage.setItem(BRAND_LOCAL_KEY, JSON.stringify(data));
       } catch(e) {}
 
-      // Debounced save to Firebase (prevents flooding on rapid changes)
+      // Multi-user safe Firebase save:
+      //  - .update() merges at top level (doesn't clobber sibling keys)
+      //  - Short 150ms debounce so rapid edits batch but slow taps still save
+      //  - No _ignoreNextFirebaseUpdate — the listener can process its own
+      //    update safely (state merge is idempotent), and ignoring it would
+      //    suppress concurrent remote writes from other users
       if (_firebaseReady && _firebaseRef) {
         clearTimeout(_saveDebounceTimer);
         _saveDebounceTimer = setTimeout(function() {
@@ -2803,8 +2809,7 @@
           PERSIST_FIELDS.forEach(function(f) {
             if (state[f] !== undefined && state[f] !== null) fbData[f] = state[f];
           });
-          _ignoreNextFirebaseUpdate = true;
-          _firebaseRef.set(fbData).then(function() {
+          _firebaseRef.update(fbData).then(function() {
             _syncStatus = 'synced';
             updateSyncIndicator();
           }).catch(function(err) {
@@ -2812,7 +2817,48 @@
             updateSyncIndicator();
             console.error('Firebase save error:', err);
           });
-        }, 500);
+        }, 150);
+      }
+    }
+
+    // Flush pending debounced save when the tab is about to close.
+    // Without this, edits made within 150ms of closing the tab can be lost.
+    window.addEventListener('beforeunload', function() {
+      if (_saveDebounceTimer) {
+        clearTimeout(_saveDebounceTimer);
+        if (_firebaseReady && _firebaseRef) {
+          var fbData = {};
+          PERSIST_FIELDS.forEach(function(f) {
+            if (state[f] !== undefined && state[f] !== null) fbData[f] = state[f];
+          });
+          // Synchronous-ish: fire the write and let the browser do its best.
+          // Modern browsers don't wait, but the request usually still goes out.
+          _firebaseRef.update(fbData);
+        }
+      }
+    });
+
+    // Granular save for path-specific writes (multi-user safe — doesn't clobber peers).
+    // Use this for boolean toggles like cpDone, single-field updates, etc.
+    function savePath(relativePath, value) {
+      try {
+        var data = {};
+        PERSIST_FIELDS.forEach(function(f) {
+          if (state[f] !== undefined && state[f] !== null) data[f] = state[f];
+        });
+        localStorage.setItem(BRAND_LOCAL_KEY, JSON.stringify(data));
+      } catch(e) {}
+      if (_firebaseReady && _firebaseRef) {
+        var ref = _firebaseRef.child(relativePath);
+        var op = value === null ? ref.remove() : ref.set(value);
+        op.then(function() {
+          _syncStatus = 'synced';
+          updateSyncIndicator();
+        }).catch(function(err) {
+          _syncStatus = 'offline';
+          updateSyncIndicator();
+          console.error('Firebase savePath error (' + relativePath + '):', err);
+        });
       }
     }
 
@@ -4394,7 +4440,14 @@
     function toggleCPDone(taskKey) {
       if (!state.cpDone) state.cpDone = {};
       state.cpDone[taskKey] = !state.cpDone[taskKey];
-      saveState();
+      // Path-specific save so two users toggling different tasks at the same
+      // time don't clobber each other's changes (which the old whole-cpDone
+      // .set() would do).
+      if (state.cpDone[taskKey]) {
+        savePath('cpDone/' + taskKey, true);
+      } else {
+        savePath('cpDone/' + taskKey, null); // remove the false key entirely
+      }
       render();
     }
 
